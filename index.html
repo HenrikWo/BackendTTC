@@ -38,6 +38,15 @@
             background-color: #f8f9fa;
             border-radius: 6px;
             white-space: pre-wrap;
+            text-align: left;
+        }
+        .error {
+            background-color: #fee;
+            border: 1px solid #fcc;
+        }
+        .success {
+            background-color: #efe;
+            border: 1px solid #cfc;
         }
     </style>
 </head>
@@ -53,35 +62,76 @@
     </div>
 
     <script>
-        async function testHello() {
-    try {
-        const response = await fetch('/api/hello');
-        const text = await response.text(); // hent som tekst først
-        let data;
-        try {
-            data = JSON.parse(text);
-        } catch {
-            throw new Error('Server returnerte ikke JSON:\n' + text);
+        function showResult(content, isError = false) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = content;
+            resultDiv.className = isError ? 'error' : 'success';
         }
-        document.getElementById('result').textContent =
-            '✅ Hello API:\n' + JSON.stringify(data, null, 2);
-    } catch (error) {
-        document.getElementById('result').textContent =
-            '❌ Feil: ' + error.message;
-    }
-}
 
-        async function testHealth() {
+        async function testHello() {
+            console.log('🚀 Starter testHello()');
+            showResult('⏳ Tester Hello API...');
+            
             try {
-                const response = await fetch('/api/health');
-                const data = await response.json();
-                document.getElementById('result').textContent = 
-                    '✅ Health API:\n' + JSON.stringify(data, null, 2);
+                console.log('📡 Sender request til /api/hello');
+                const response = await fetch('/api/hello');
+                
+                console.log('📊 Response status:', response.status);
+                console.log('📊 Response ok:', response.ok);
+                console.log('📊 Response headers:', [...response.headers.entries()]);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const text = await response.text();
+                console.log('📄 Raw response text:', text);
+                
+                let data;
+                try {
+                    data = JSON.parse(text);
+                    console.log('✅ Parsed JSON:', data);
+                } catch (parseError) {
+                    console.error('❌ JSON parse error:', parseError);
+                    throw new Error('Server returnerte ikke gyldig JSON:\n' + text);
+                }
+                
+                showResult('✅ Hello API Success:\n' + JSON.stringify(data, null, 2), false);
+                
             } catch (error) {
-                document.getElementById('result').textContent = 
-                    '❌ Feil: ' + error.message;
+                console.error('❌ testHello() error:', error);
+                showResult('❌ Hello API Error:\n' + error.message, true);
             }
         }
+
+        async function testHealth() {
+            console.log('🚀 Starter testHealth()');
+            showResult('⏳ Tester Health API...');
+            
+            try {
+                console.log('📡 Sender request til /api/health');
+                const response = await fetch('/api/health');
+                
+                console.log('📊 Response status:', response.status);
+                console.log('📊 Response ok:', response.ok);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                console.log('✅ Health data:', data);
+                
+                showResult('✅ Health API Success:\n' + JSON.stringify(data, null, 2), false);
+                
+            } catch (error) {
+                console.error('❌ testHealth() error:', error);
+                showResult('❌ Health API Error:\n' + error.message, true);
+            }
+        }
+
+        // Test at siden er lastet
+        console.log('🎯 JavaScript er lastet og klar!');
     </script>
 </body>
 </html>
