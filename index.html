@@ -95,14 +95,13 @@
             try {
                 showResult('⏳ Tester Railway backend via Vercel proxy...');
                 
-                const response = await fetch('/api/railway-test', {
+                const response = await fetch('/api/tts', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        message: 'Hei fra frontend!',
-                        timestamp: new Date().toISOString()
+                        text: 'Test fra frontend!'
                     })
                 });
                 
