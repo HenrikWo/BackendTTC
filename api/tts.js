@@ -21,7 +21,10 @@ export default async function handler(req, res) {
         }
   
         // Send til Railway backend for lagring
-        const railwayResponse = await fetch('https://your-railway-app.railway.app/upload', {
+        // TODO: Erstatt med din faktiske Railway URL
+        const RAILWAY_URL = process.env.RAILWAY_URL || 'https://backendttc-production.up.railway.app';
+        
+        const railwayResponse = await fetch(`${RAILWAY_URL}/upload`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -64,7 +67,8 @@ export default async function handler(req, res) {
         }
   
         // Hent fra Railway backend
-        const railwayResponse = await fetch(`https://your-railway-app.railway.app/image/${filename}`);
+        const RAILWAY_URL = process.env.RAILWAY_URL || 'https://your-railway-app.railway.app';
+        const railwayResponse = await fetch(`${RAILWAY_URL}/image/${filename}`);
         
         if (railwayResponse.ok) {
           const result = await railwayResponse.json();
