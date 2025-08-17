@@ -1,65 +1,97 @@
-// api/tts.js - TTS proxy til Railway
+// api/tts.js - Vercel Serverless Function
 export default async function handler(req, res) {
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    
+  
     if (req.method === 'OPTIONS') {
-        return res.status(200).end();
+      return res.status(200).end();
     }
-    
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
-    
-    try {
-        const { text } = req.body;
+  
+    if (req.method === 'POST') {
+      try {
+        const { image, filename } = req.body;
         
-        if (!text) {
-            return res.status(400).json({ error: 'Text is required' });
+        if (!image || !filename) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Mangler image eller filename' 
+          });
         }
-        
-        // Railway backend URL
-        const RAILWAY_URL = process.env.RAILWAY_BACKEND_URL;
-        
-        if (!RAILWAY_URL) {
-            return res.status(500).json({ 
-                error: 'RAILWAY_BACKEND_URL ikke satt',
-                help: 'Sett environment variable i Vercel'
-            });
-        }
-        
-        console.log('Sender til Railway:', RAILWAY_URL, 'tekst:', text);
-        
-        const response = await fetch(`${RAILWAY_URL}/api/tts`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ text })
+  
+        // Send til Railway backend for lagring
+        const railwayResponse = await fetch('https://your-railway-app.railway.app/upload', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ image, filename })
         });
+  
+        const result = await railwayResponse.json();
         
-        if (!response.ok) {
-            throw new Error(`Railway error: ${response.status}`);
+        if (railwayResponse.ok) {
+          res.status(200).json({ 
+            success: true, 
+            message: 'Bilde lastet opp!',
+            filename: result.filename 
+          });
+        } else {
+          res.status(500).json({ 
+            success: false, 
+            error: result.error || 'Feil ved opplasting' 
+          });
         }
+      } catch (error) {
+        console.error('Upload error:', error);
+        res.status(500).json({ 
+          success: false, 
+          error: 'Server feil ved opplasting' 
+        });
+      }
+    } 
+    
+    else if (req.method === 'GET') {
+      try {
+        const { filename } = req.query;
         
-        const result = await response.json();
+        if (!filename) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Mangler filename parameter' 
+          });
+        }
+  
+        // Hent fra Railway backend
+        const railwayResponse = await fetch(`https://your-railway-app.railway.app/image/${filename}`);
         
-        return res.status(200).json({
+        if (railwayResponse.ok) {
+          const result = await railwayResponse.json();
+          res.status(200).json({
             success: true,
-            message: 'TTS request sendt til Railway!',
-            railway_url: RAILWAY_URL,
-            railway_response: result
+            image: result.image,
+            filename: result.filename
+          });
+        } else {
+          res.status(404).json({ 
+            success: false, 
+            error: 'Bilde ikke funnet' 
+          });
+        }
+      } catch (error) {
+        console.error('Get image error:', error);
+        res.status(500).json({ 
+          success: false, 
+          error: 'Server feil ved henting av bilde' 
         });
-        
-    } catch (error) {
-        console.error('TTS API error:', error);
-        return res.status(500).json({ 
-            success: false,
-            error: 'Railway backend ikke tilgjengelig',
-            details: error.message,
-            railway_url: process.env.RAILWAY_BACKEND_URL || 'IKKE_SATT'
-        });
+      }
     }
-}
+    
+    else {
+      res.status(405).json({ 
+        success: false, 
+        error: 'Method not allowed' 
+      });
+    }
+  }
