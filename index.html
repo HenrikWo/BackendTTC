@@ -130,6 +130,24 @@
             }
         }
 
+        async function testTTS() {
+    const text = prompt("Skriv tekst for TTS:");
+    if (!text) return;
+    
+    try {
+        const response = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+        
+        const result = await response.json();
+        showResult('🎵 TTS Result:\n' + JSON.stringify(result, null, 2));
+    } catch (error) {
+        showResult('❌ TTS Error:\n' + error.message, true);
+    }
+}
+
         // Test at siden er lastet
         console.log('🎯 JavaScript er lastet og klar!');
     </script>
