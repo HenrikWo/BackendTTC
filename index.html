@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vercel Test</title>
+    <title>Frontend → Railway Test</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -32,6 +32,12 @@
         button:hover {
             background-color: #0056b3;
         }
+        .railway-button {
+            background-color: #ff6b35;
+        }
+        .railway-button:hover {
+            background-color: #e55a2e;
+        }
         #result {
             margin-top: 20px;
             padding: 15px;
@@ -52,11 +58,17 @@
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Vercel Backend Test</h1>
-        <p>Test at vår Vercel backend fungerer!</p>
+        <h1>🚀 Frontend → Railway Test</h1>
+        <p>Test kommunikasjon mellom frontend og Railway backend!</p>
         
-        <button onclick="testHello()">Test Hello API</button>
-        <button onclick="testHealth()">Test Health API</button>
+        <!-- Vercel API tests -->
+        <button onclick="testHello()">Test Hello (Vercel)</button>
+        
+        <!-- Railway test -->
+        <button onclick="testRailway()" class="railway-button">Test Railway Backend</button>
+        
+        <!-- TTS test -->
+        <button onclick="testTTS()" class="railway-button">Test TTS (Railway)</button>
         
         <div id="result"></div>
     </div>
@@ -69,87 +81,70 @@
         }
 
         async function testHello() {
-            console.log('🚀 Starter testHello()');
-            showResult('⏳ Tester Hello API...');
-            
             try {
-                console.log('📡 Sender request til /api/hello');
+                showResult('⏳ Tester Hello API...');
                 const response = await fetch('/api/hello');
-                
-                console.log('📊 Response status:', response.status);
-                console.log('📊 Response ok:', response.ok);
-                console.log('📊 Response headers:', [...response.headers.entries()]);
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                
-                const text = await response.text();
-                console.log('📄 Raw response text:', text);
-                
-                let data;
-                try {
-                    data = JSON.parse(text);
-                    console.log('✅ Parsed JSON:', data);
-                } catch (parseError) {
-                    console.error('❌ JSON parse error:', parseError);
-                    throw new Error('Server returnerte ikke gyldig JSON:\n' + text);
-                }
-                
-                showResult('✅ Hello API Success:\n' + JSON.stringify(data, null, 2), false);
-                
+                const data = await response.json();
+                showResult('✅ Hello API fungerer:\n' + JSON.stringify(data, null, 2));
             } catch (error) {
-                console.error('❌ testHello() error:', error);
-                showResult('❌ Hello API Error:\n' + error.message, true);
+                showResult('❌ Hello API feil:\n' + error.message, true);
             }
         }
 
-        async function testHealth() {
-            console.log('🚀 Starter testHealth()');
-            showResult('⏳ Tester Health API...');
-            
+        async function testRailway() {
             try {
-                console.log('📡 Sender request til /api/health');
-                const response = await fetch('/api/health');
+                showResult('⏳ Tester Railway backend via Vercel proxy...');
                 
-                console.log('📊 Response status:', response.status);
-                console.log('📊 Response ok:', response.ok);
+                const response = await fetch('/api/railway-test', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: 'Hei fra frontend!',
+                        timestamp: new Date().toISOString()
+                    })
+                });
                 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
                 const data = await response.json();
-                console.log('✅ Health data:', data);
-                
-                showResult('✅ Health API Success:\n' + JSON.stringify(data, null, 2), false);
+                showResult('✅ Railway kommunikasjon fungerer!\n' + JSON.stringify(data, null, 2));
                 
             } catch (error) {
-                console.error('❌ testHealth() error:', error);
-                showResult('❌ Health API Error:\n' + error.message, true);
+                showResult('❌ Railway test feil:\n' + error.message + '\n\nSjekk at Railway backend kjører!', true);
             }
         }
 
         async function testTTS() {
-    const text = prompt("Skriv tekst for TTS:");
-    if (!text) return;
-    
-    try {
-        const response = await fetch('/api/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text })
-        });
-        
-        const result = await response.json();
-        showResult('🎵 TTS Result:\n' + JSON.stringify(result, null, 2));
-    } catch (error) {
-        showResult('❌ TTS Error:\n' + error.message, true);
-    }
-}
+            try {
+                showResult('⏳ Tester TTS via Railway...');
+                
+                const response = await fetch('/api/tts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: 'Hei, dette er en test av TTS systemet!'
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                showResult('✅ TTS test fungerer!\n' + JSON.stringify(data, null, 2));
+                
+            } catch (error) {
+                showResult('❌ TTS test feil:\n' + error.message, true);
+            }
+        }
 
-        // Test at siden er lastet
-        console.log('🎯 JavaScript er lastet og klar!');
+        console.log('🎯 Test-side lastet!');
     </script>
 </body>
 </html>

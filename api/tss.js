@@ -1,8 +1,8 @@
-// api/tts.js - Send TTS request to Railway backend
+// api/tts.js - Forenklet TTS test
 export default async function handler(req, res) {
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     
     if (req.method === 'OPTIONS') {
@@ -14,46 +14,43 @@ export default async function handler(req, res) {
     }
     
     try {
-        const { text, voice = 'default' } = req.body;
+        const { text } = req.body;
         
         if (!text) {
             return res.status(400).json({ error: 'Text is required' });
         }
         
-        // Send request to Railway backend
-        const RAILWAY_URL = process.env.RAILWAY_BACKEND_URL || 'https://your-app.railway.app';
+        // Railway backend URL
+        const RAILWAY_URL = process.env.RAILWAY_BACKEND_URL || 'http://localhost:3000';
+        
+        console.log('Sending to Railway:', text);
         
         const response = await fetch(`${RAILWAY_URL}/api/tts`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                text: text.slice(0, 1000), // Limit text length
-                voice: voice,
-                requestId: Date.now().toString()
-            })
+            body: JSON.stringify({ text })
         });
         
         if (!response.ok) {
-            throw new Error(`Backend error: ${response.status}`);
+            throw new Error(`Railway error: ${response.status}`);
         }
         
         const result = await response.json();
         
         return res.status(200).json({
             success: true,
-            jobId: result.jobId,
-            status: result.status,
-            message: 'TTS request submitted',
-            estimatedTime: result.estimatedTime || '10-30 seconds'
+            message: 'TTS request sendt til Railway!',
+            railway_response: result
         });
         
     } catch (error) {
         console.error('TTS API error:', error);
         return res.status(500).json({ 
-            error: 'Internal server error',
-            message: error.message 
+            success: false,
+            error: 'Railway backend ikke tilgjengelig',
+            details: error.message
         });
     }
 }
