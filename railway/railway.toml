@@ -1,9 +1,6 @@
 [build]
 builder = "nixpacks"
-
-[build.env]
-NIXPACKS_NODE_VERSION = "18"
-NPM_CONFIG_PACKAGE_LOCK = "false"
+buildCommand = "npm install"
 
 [deploy]
 startCommand = "npm start"
@@ -11,8 +8,3 @@ healthcheckPath = "/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
-
-# Force npm install instead of npm ci
-[[build.phases]]
-name = "install"
-commands = ["npm install --production"]
