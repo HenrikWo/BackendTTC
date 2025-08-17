@@ -1,12 +1,5 @@
-// Railway Backend - server.js
-import express from 'express';
-import cors from 'cors';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const express = require('express');
+const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// In-memory job storage (replace with database in production)
+// In-memory job storage
 const jobs = new Map();
 
 // Health check
@@ -27,41 +20,43 @@ app.get('/health', (req, res) => {
     });
 });
 
-// TTS endpoint
-app.post('/api/tts', async (req, res) => {
-    try {
-        const { text, voice = 'default', requestId } = req.body;
-        
-        if (!text || text.length === 0) {
-            return res.status(400).json({ error: 'Text is required' });
-        }
-        
-        const jobId = `tts_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        // Store job
-        jobs.set(jobId, {
-            id: jobId,
-            text: text,
-            voice: voice,
-            requestId: requestId,
-            status: 'queued',
-            createdAt: new Date().toISOString(),
-            progress: 0
-        });
-        
-        // Start processing asynchronously
-        processTTS(jobId, text, voice);
-        
-        res.json({
-            jobId: jobId,
-            status: 'queued',
-            estimatedTime: '10-30 seconds'
-        });
-        
-    } catch (error) {
-        console.error('TTS endpoint error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+// Simple test endpoint
+app.post('/api/test', (req, res) => {
+    const { message, sentAt, from } = req.body;
+    
+    console.log('📨 Mottok test-melding fra:', from, '- Melding:', message);
+    
+    res.json({
+        received: true,
+        your_message: message,
+        sent_at: sentAt,
+        railway_timestamp: new Date().toISOString(),
+        railway_status: 'Railway backend fungerer! 🎉'
+    });
+});
+
+// Simple TTS endpoint (mock for testing)
+app.post('/api/tts', (req, res) => {
+    const { text } = req.body;
+    
+    console.log('🎤 TTS Request mottatt:', text);
+    
+    if (!text) {
+        return res.status(400).json({ error: 'Text is required' });
     }
+    
+    // Simulate processing
+    setTimeout(() => {
+        console.log('✅ TTS prosessering ferdig for:', text);
+    }, 1000);
+    
+    res.json({
+        message: 'TTS prosessering startet!',
+        text: text,
+        status: 'processing',
+        railway_timestamp: new Date().toISOString(),
+        estimated_completion: '5-10 sekunder'
+    });
 });
 
 // Job status endpoint
@@ -85,7 +80,6 @@ async function processTTS(jobId, text, voice) {
         job.status = 'processing';
         job.progress = 10;
         
-        // Simulate ONNX TTS processing
         console.log(`Processing TTS for job ${jobId}: "${text}"`);
         
         // Mock processing steps
@@ -98,13 +92,7 @@ async function processTTS(jobId, text, voice) {
         await sleep(2000);
         job.progress = 90;
         
-        // Here you would normally:
-        // 1. Load ONNX model
-        // 2. Process text through TTS
-        // 3. Generate audio file
-        // 4. Save to storage/CDN
-        
-        // Mock result
+        // Mock completed result
         const audioUrl = `https://example.com/audio/${jobId}.wav`;
         
         job.status = 'completed';
@@ -125,7 +113,7 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Clean up old jobs (run every hour)
+// Clean up old jobs every hour
 setInterval(() => {
     const oneHourAgo = Date.now() - 60 * 60 * 1000;
     
@@ -138,4 +126,5 @@ setInterval(() => {
 
 app.listen(PORT, () => {
     console.log(`🚀 Railway TTS Backend running on port ${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
 });
