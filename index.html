@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TTS System med ONNX</title>
+    <title>Frontend → Railway Test</title>
     <style>
         body {
             font-family: Arial, sans-serif;
-            max-width: 800px;
+            max-width: 600px;
             margin: 50px auto;
             padding: 20px;
             background-color: #f5f5f5;
@@ -18,19 +18,6 @@
             border-radius: 10px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             text-align: center;
-        }
-        .input-section {
-            margin: 20px 0;
-        }
-        textarea {
-            width: 100%;
-            height: 100px;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            font-size: 16px;
-            resize: vertical;
-            margin: 10px 0;
         }
         button {
             background-color: #0070f3;
@@ -45,23 +32,11 @@
         button:hover {
             background-color: #0056b3;
         }
-        button:disabled {
-            background-color: #ccc;
-            cursor: not-allowed;
-        }
         .railway-button {
             background-color: #ff6b35;
         }
         .railway-button:hover {
             background-color: #e55a2e;
-        }
-        .tts-button {
-            background-color: #28a745;
-            font-size: 18px;
-            padding: 15px 30px;
-        }
-        .tts-button:hover {
-            background-color: #218838;
         }
         #result {
             margin-top: 20px;
@@ -79,253 +54,32 @@
             background-color: #efe;
             border: 1px solid #cfc;
         }
-        .processing {
-            background-color: #fff3cd;
-            border: 1px solid #ffeaa7;
-        }
-        .progress-bar {
-            width: 100%;
-            height: 20px;
-            background-color: #e9ecef;
-            border-radius: 10px;
-            overflow: hidden;
-            margin: 10px 0;
-        }
-        .progress-fill {
-            height: 100%;
-            background-color: #28a745;
-            transition: width 0.3s ease;
-            text-align: center;
-            color: white;
-            line-height: 20px;
-            font-size: 12px;
-        }
-        .audio-section {
-            margin: 20px 0;
-            padding: 20px;
-            background-color: #f8f9fa;
-            border-radius: 8px;
-            border: 2px dashed #dee2e6;
-        }
-        audio {
-            width: 100%;
-            margin: 10px 0;
-        }
-        .audio-controls {
-            margin: 15px 0;
-        }
-        .download-btn {
-            background-color: #6c757d;
-            text-decoration: none;
-            display: inline-block;
-        }
-        .download-btn:hover {
-            background-color: #5a6268;
-        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🎤 TTS System med ONNX</h1>
-        <p>Skriv inn tekst og generer lyd med AI!</p>
+        <h1>🚀 Frontend → Railway Test</h1>
+        <p>Test kommunikasjon mellom frontend og Railway backend!</p>
         
-        <div class="input-section">
-            <textarea id="textInput" placeholder="Skriv inn teksten du vil konvertere til tale...">Hei! Dette er en test av vårt nye TTS-system med ONNX-teknologi. Systemet kan lage naturlig tale fra tekst på norsk.</textarea>
-            <br>
-            <button onclick="generateTTS()" class="tts-button" id="generateBtn">🎵 Generer Tale</button>
-        </div>
-        
-        <div id="progressSection" style="display: none;">
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill" style="width: 0%;">0%</div>
-            </div>
-            <p id="statusText">Prosesserer...</p>
-        </div>
-        
-        <div id="audioSection" class="audio-section" style="display: none;">
-            <h3>🔊 Generert Lyd</h3>
-            <audio id="audioPlayer" controls>
-                Din nettleser støtter ikke audio-elementet.
-            </audio>
-            <div class="audio-controls">
-                <button onclick="playAudio()">▶️ Spill av</button>
-                <button onclick="pauseAudio()">⏸️ Pause</button>
-                <button onclick="stopAudio()">⏹️ Stopp</button>
-                <a href="#" id="downloadLink" class="download-btn" download="tts_audio.wav">📥 Last ned WAV</a>
-            </div>
-        </div>
-        
-        <!-- Test buttons -->
-        <hr style="margin: 40px 0;">
-        <h3>🧪 Systemtester</h3>
+        <!-- Vercel API tests -->
         <button onclick="testHello()">Test Hello (Vercel)</button>
+        
+        <!-- Railway test -->
         <button onclick="testRailway()" class="railway-button">Test Railway Backend</button>
+        
+        <!-- TTS test -->
+        <button onclick="testTTS()" class="railway-button">Test TTS (Railway)</button>
         
         <div id="result"></div>
     </div>
 
     <script>
-        let currentJobId = null;
-        let statusInterval = null;
-
-        function showResult(content, className = 'success') {
+        function showResult(content, isError = false) {
             const resultDiv = document.getElementById('result');
             resultDiv.textContent = content;
-            resultDiv.className = className;
+            resultDiv.className = isError ? 'error' : 'success';
         }
 
-        function updateProgress(progress, status) {
-            const progressFill = document.getElementById('progressFill');
-            const statusText = document.getElementById('statusText');
-            
-            progressFill.style.width = progress + '%';
-            progressFill.textContent = progress + '%';
-            statusText.textContent = status;
-        }
-
-        function showProgressSection(show) {
-            document.getElementById('progressSection').style.display = show ? 'block' : 'none';
-        }
-
-        function showAudioSection(show) {
-            document.getElementById('audioSection').style.display = show ? 'block' : 'none';
-        }
-
-        async function generateTTS() {
-            const textInput = document.getElementById('textInput');
-            const generateBtn = document.getElementById('generateBtn');
-            const text = textInput.value.trim();
-
-            if (!text) {
-                showResult('❌ Vennligst skriv inn tekst!', 'error');
-                return;
-            }
-
-            try {
-                generateBtn.disabled = true;
-                generateBtn.textContent = '⏳ Genererer...';
-                
-                showProgressSection(true);
-                showAudioSection(false);
-                updateProgress(0, 'Starter TTS-generering...');
-
-                // Send request to TTS API
-                const response = await fetch('/api/tts', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ text })
-                });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-
-                const data = await response.json();
-                currentJobId = data.jobId;
-
-                showResult('✅ TTS-jobb startet! JobID: ' + currentJobId, 'processing');
-                updateProgress(10, 'TTS-prosessering startet...');
-
-                // Start polling for status
-                startStatusPolling();
-
-            } catch (error) {
-                console.error('TTS Error:', error);
-                showResult('❌ TTS feil: ' + error.message, 'error');
-                generateBtn.disabled = false;
-                generateBtn.textContent = '🎵 Generer Tale';
-                showProgressSection(false);
-            }
-        }
-
-        async function startStatusPolling() {
-            if (!currentJobId) return;
-
-            statusInterval = setInterval(async () => {
-                try {
-                    const response = await fetch(`/api/job/${currentJobId}`);
-                    
-                    if (!response.ok) {
-                        throw new Error('Status check failed');
-                    }
-
-                    const job = await response.json();
-                    updateProgress(job.progress || 0, job.status);
-
-                    if (job.status === 'completed') {
-                        clearInterval(statusInterval);
-                        await handleJobCompleted(job);
-                    } else if (job.status === 'failed') {
-                        clearInterval(statusInterval);
-                        handleJobFailed(job);
-                    }
-
-                } catch (error) {
-                    console.error('Status polling error:', error);
-                    clearInterval(statusInterval);
-                    handleJobFailed({ error: error.message });
-                }
-            }, 1000); // Check every second
-        }
-
-        async function handleJobCompleted(job) {
-            const generateBtn = document.getElementById('generateBtn');
-            const audioPlayer = document.getElementById('audioPlayer');
-            const downloadLink = document.getElementById('downloadLink');
-
-            showResult('✅ TTS generering fullført!', 'success');
-            updateProgress(100, 'Fullført! 🎉');
-
-            // Set up audio player
-            const audioUrl = job.audioUrl || `/api/download/${job.id}`;
-            audioPlayer.src = audioUrl;
-            downloadLink.href = audioUrl;
-            downloadLink.download = `tts_${job.id}.wav`;
-
-            // Show audio section
-            showAudioSection(true);
-            
-            // Auto-play the audio
-            setTimeout(() => {
-                audioPlayer.play().catch(e => 
-                    console.log('Auto-play prevented by browser:', e)
-                );
-            }, 500);
-
-            generateBtn.disabled = false;
-            generateBtn.textContent = '🎵 Generer Tale';
-        }
-
-        function handleJobFailed(job) {
-            const generateBtn = document.getElementById('generateBtn');
-            
-            showResult('❌ TTS generering feilet: ' + (job.error || 'Ukjent feil'), 'error');
-            updateProgress(0, 'Feilet ❌');
-            
-            generateBtn.disabled = false;
-            generateBtn.textContent = '🎵 Generer Tale';
-        }
-
-        // Audio control functions
-        function playAudio() {
-            const audioPlayer = document.getElementById('audioPlayer');
-            audioPlayer.play();
-        }
-
-        function pauseAudio() {
-            const audioPlayer = document.getElementById('audioPlayer');
-            audioPlayer.pause();
-        }
-
-        function stopAudio() {
-            const audioPlayer = document.getElementById('audioPlayer');
-            audioPlayer.pause();
-            audioPlayer.currentTime = 0;
-        }
-
-        // Test functions (existing)
         async function testHello() {
             try {
                 showResult('⏳ Tester Hello API...');
@@ -333,7 +87,7 @@
                 const data = await response.json();
                 showResult('✅ Hello API fungerer:\n' + JSON.stringify(data, null, 2));
             } catch (error) {
-                showResult('❌ Hello API feil:\n' + error.message, 'error');
+                showResult('❌ Hello API feil:\n' + error.message, true);
             }
         }
 
@@ -359,18 +113,37 @@
                 showResult('✅ Railway kommunikasjon fungerer!\n' + JSON.stringify(data, null, 2));
                 
             } catch (error) {
-                showResult('❌ Railway test feil:\n' + error.message + '\n\nSjekk at Railway backend kjører!', 'error');
+                showResult('❌ Railway test feil:\n' + error.message + '\n\nSjekk at Railway backend kjører!', true);
             }
         }
 
-        // Cleanup on page unload
-        window.addEventListener('beforeunload', () => {
-            if (statusInterval) {
-                clearInterval(statusInterval);
+        async function testTTS() {
+            try {
+                showResult('⏳ Tester TTS via Railway...');
+                
+                const response = await fetch('/api/tts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: 'Hei, dette er en test av TTS systemet!'
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                showResult('✅ TTS test fungerer!\n' + JSON.stringify(data, null, 2));
+                
+            } catch (error) {
+                showResult('❌ TTS test feil:\n' + error.message, true);
             }
-        });
+        }
 
-        console.log('🎯 TTS System lastet!');
+        console.log('🎯 Test-side lastet!');
     </script>
 </body>
 </html>
