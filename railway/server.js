@@ -84,72 +84,50 @@ app.get('/api/models', (req, res) => {
 });
 
 // NYTT: Download modeller fra Google Drive
-app.post('/api/download-model', async (req, res) => {
-    const { url, filename } = req.body;
-    
-    if (!url || !filename) {
-        return res.status(400).json({ 
-            error: 'URL and filename required',
-            example: {
-                url: 'https://drive.google.com/uc?export=download&id=FILE_ID',
-                filename: 'model.onnx'
-            }
-        });
-    }
-    
-    try {
-        console.log('⬇️ Downloading model:', filename, 'from:', url);
-        
-        const response = await fetch(url);
-        
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+app.post('/api/download-models', async (req, res) => {
+    // Filene vi vil laste ned
+    const files = [
+        {
+            url: 'https://drive.google.com/uc?export=download&id=1I28oJZCG9FuWut1cmCltAPMQMJULo9PV',
+            filename: 'no_NO-talesyntese-medium.onnx'
+        },
+        {
+            url: 'https://drive.google.com/uc?export=download&id=1dPk-LRdL2KtWJsEj_ExyFYUEbQclm2n3',
+            filename: 'no_NO-talesyntese-medium.onnx.json'
         }
-        
-        const buffer = await response.arrayBuffer();
-        const filePath = path.join(MODELS_DIR, filename);
-        
-        // Ensure models directory exists
+    ];
+
+    try {
+        // Sørg for at models directory finnes
         if (!fs.existsSync(MODELS_DIR)) {
             fs.mkdirSync(MODELS_DIR, { recursive: true });
         }
-        
-        fs.writeFileSync(filePath, Buffer.from(buffer));
-        
-        const sizeMB = Math.round(buffer.byteLength / (1024 * 1024) * 100) / 100;
-        console.log('✅ Downloaded successfully:', filename, '-', sizeMB, 'MB');
-        
-        res.json({
-            message: 'Model downloaded successfully!',
-            filename: filename,
-            size: sizeMB + ' MB',
-            path: filePath
-        });
-        
+
+        for (const file of files) {
+            console.log('⬇️ Downloading model:', file.filename, 'from:', file.url);
+
+            const response = await fetch(file.url);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const buffer = await response.arrayBuffer();
+            const filePath = path.join(MODELS_DIR, file.filename);
+            fs.writeFileSync(filePath, Buffer.from(buffer));
+
+            const sizeMB = Math.round(buffer.byteLength / (1024 * 1024) * 100) / 100;
+            console.log('✅ Downloaded successfully:', file.filename, '-', sizeMB, 'MB');
+        }
+
+        res.json({ message: 'All models downloaded successfully!' });
+
     } catch (error) {
         console.error('❌ Download failed:', error);
         res.status(500).json({ 
             error: 'Download failed',
-            details: error.message,
-            url: url,
-            filename: filename
+            details: error.message
         });
     }
-});
-
-// Simple test endpoint
-app.post('/api/test', (req, res) => {
-    const { message, sentAt, from } = req.body;
-    
-    console.log('📨 Mottok test-melding fra:', from, '- Melding:', message);
-    
-    res.json({
-        received: true,
-        your_message: message,
-        sent_at: sentAt,
-        railway_timestamp: new Date().toISOString(),
-        railway_status: 'Railway backend fungerer! 🎉'
-    });
 });
 
 // Simple TTS endpoint (mock for testing)
