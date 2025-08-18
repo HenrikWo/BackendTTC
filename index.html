@@ -26,6 +26,7 @@
             border-radius: 6px;
             border: 1px solid #ccc;
             font-size: 16px;
+            box-sizing: border-box;
         }
         button {
             background-color: #0070f3;
@@ -40,11 +41,9 @@
         button:hover {
             background-color: #0056b3;
         }
-        .railway-button {
-            background-color: #ff6b35;
-        }
-        .railway-button:hover {
-            background-color: #e55a2e;
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
         }
         #progress-container {
             display: none;
@@ -61,6 +60,7 @@
             color: white;
             line-height: 20px;
             border-radius: 6px;
+            transition: width 0.3s ease;
         }
         #tts-status {
             margin-top: 5px;
@@ -70,11 +70,24 @@
             color: red;
             margin-top: 10px;
             display: none;
+            padding: 10px;
+            background-color: #ffe6e6;
+            border-radius: 6px;
         }
         #success-message {
             color: green;
             margin-top: 10px;
             display: none;
+            padding: 10px;
+            background-color: #e6ffe6;
+            border-radius: 6px;
+        }
+        #audio-container {
+            margin-top: 20px;
+        }
+        #audio-container audio {
+            width: 100%;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -98,15 +111,137 @@
         <div id="audio-container"></div>
     </div>
 
-    <script src="api/tts.js"></script>
-    
     <script>
-        // Denne skriptblokken er kun for å håndtere avspilling i HTML
-        function playAudio(audioUrl) {
-            const container = document.getElementById('audio-container');
-            container.innerHTML = `<audio controls src="${audioUrl}" autoplay></audio>`;
+        // TTS Frontend API - Railway Backend Integration
+        const BACKEND_URL = 'https://backendttc-production.up.railway.app';
+
+        // TTS Request Function
+        async function sendTTSRequest(text, voice = 'default') {
+            try {
+                console.log('📤 Sending TTS request:', text);
+                
+                const response = await fetch(`${BACKEND_URL}/api/tts`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        text: text,
+                        voice: voice 
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const result = await response.json();
+                console.log('✅ TTS Job created:', result);
+                
+                // Start polling for completion
+                if (result.jobId) {
+                    return await pollJobCompletion(result.jobId);
+                }
+                
+                return result;
+                
+            } catch (error) {
+                console.error('❌ TTS Request failed:', error);
+                throw error;
+            }
         }
 
+        // Poll Job Status
+        async function pollJobCompletion(jobId, maxAttempts = 30, interval = 2000) {
+            console.log('🔄 Polling job status:', jobId);
+            
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    const response = await fetch(`${BACKEND_URL}/api/job/${jobId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
+                    const status = await response.json();
+                    console.log(`📊 Job status (${attempt}/${maxAttempts}):`, status.status, `${status.progress || 0}%`);
+                    
+                    // Update UI with progress
+                    updateProgress(status);
+                    
+                    if (status.status === 'completed') {
+                        console.log('✅ Job completed!', status);
+                        return status;
+                    }
+                    
+                    if (status.status === 'failed') {
+                        console.error('❌ Job failed:', status.error);
+                        throw new Error(`TTS processing failed: ${status.error}`);
+                    }
+                    
+                    // Wait before next poll
+                    if (attempt < maxAttempts) {
+                        await sleep(interval);
+                    }
+                    
+                } catch (error) {
+                    console.error(`❌ Polling attempt ${attempt} failed:`, error);
+                    if (attempt === maxAttempts) {
+                        throw error;
+                    }
+                    await sleep(interval);
+                }
+            }
+            
+            throw new Error('Job polling timeout - job did not complete in time');
+        }
+
+        // Check Backend Health
+        async function checkBackendHealth() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/health`);
+                const health = await response.json();
+                
+                console.log('🏥 Backend health:', health);
+                
+                return {
+                    online: response.ok,
+                    modelsAvailable: health.models_info?.exists && 
+                                   health.models_info?.files?.some(f => f.endsWith('.onnx')),
+                    details: health
+                };
+                
+            } catch (error) {
+                console.error('❌ Backend health check failed:', error);
+                return {
+                    online: false,
+                    modelsAvailable: false,
+                    error: error.message
+                };
+            }
+        }
+
+        // List Available Models
+        async function listModels() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/models`);
+                const models = await response.json();
+                
+                console.log('🤖 Available models:', models);
+                return models;
+                
+            } catch (error) {
+                console.error('❌ Failed to list models:', error);
+                throw error;
+            }
+        }
+
+        // Utility Functions
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // Update Progress in UI
         function updateProgress(status) {
             const progressElement = document.getElementById('tts-progress');
             const statusElement = document.getElementById('tts-status');
@@ -132,56 +267,107 @@
             }
         }
 
+        // UI Helper Functions
         function showError(message) {
+            console.error('UI Error:', message);
             const errorDiv = document.getElementById('error-message');
-            errorDiv.textContent = message;
-            errorDiv.style.display = 'block';
+            const successDiv = document.getElementById('success-message');
+            
+            if (errorDiv) {
+                errorDiv.textContent = message;
+                errorDiv.style.display = 'block';
+            }
+            if (successDiv) {
+                successDiv.style.display = 'none';
+            }
         }
 
         function showSuccess(message) {
+            console.log('UI Success:', message);
             const successDiv = document.getElementById('success-message');
-            successDiv.textContent = message;
-            successDiv.style.display = 'block';
+            const errorDiv = document.getElementById('error-message');
+            
+            if (successDiv) {
+                successDiv.textContent = message;
+                successDiv.style.display = 'block';
+            }
+            if (errorDiv) {
+                errorDiv.style.display = 'none';
+            }
         }
 
         function showProgress(show) {
             const progressDiv = document.getElementById('progress-container');
-            progressDiv.style.display = show ? 'block' : 'none';
+            if (progressDiv) {
+                progressDiv.style.display = show ? 'block' : 'none';
+            }
         }
 
+        function playAudio(audioUrl) {
+            const container = document.getElementById('audio-container');
+            if (container) {
+                container.innerHTML = `<audio controls src="${audioUrl}" autoplay></audio>`;
+            }
+        }
+
+        // DOM Event Handlers
         document.addEventListener('DOMContentLoaded', async () => {
+            console.log('🚀 TTS App starting...');
+            
+            // Check backend on page load
+            const health = await checkBackendHealth();
+            
+            if (!health.online) {
+                showError('Backend er ikke tilgjengelig');
+                return;
+            }
+            
+            if (!health.modelsAvailable) {
+                showError('TTS modeller er ikke tilgjengelige');
+                return;
+            }
+            
+            console.log('✅ TTS System ready!');
+            
+            // Setup TTS form
             const ttsForm = document.getElementById('tts-form');
             const textInput = document.getElementById('tts-text');
             const submitButton = document.getElementById('tts-submit');
-
-            ttsForm.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const text = textInput.value.trim();
-                if (!text) {
-                    showError('Vennligst skriv inn tekst');
-                    return;
-                }
-
-                submitButton.disabled = true;
-                submitButton.textContent = 'Prosesserer...';
-                showProgress(true);
-
-                try {
-                    const result = await window.TTS.sendRequest(text);
-                    if (result.audioUrl) {
-                        playAudio(result.audioUrl);
-                        showSuccess('TTS generert!');
-                    } else {
-                        showSuccess('TTS ferdig prosessert!');
+            
+            if (ttsForm && textInput && submitButton) {
+                ttsForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    
+                    const text = textInput.value.trim();
+                    if (!text) {
+                        showError('Vennligst skriv inn tekst');
+                        return;
                     }
-                } catch (error) {
-                    showError(`TTS feilet: ${error.message}`);
-                } finally {
-                    submitButton.disabled = false;
-                    submitButton.textContent = 'Generer tale';
-                    showProgress(false);
-                }
-            });
+                    
+                    try {
+                        submitButton.disabled = true;
+                        submitButton.textContent = 'Prosesserer...';
+                        
+                        showProgress(true);
+                        
+                        const result = await sendTTSRequest(text);
+                        
+                        if (result.audioUrl) {
+                            playAudio(result.audioUrl);
+                            showSuccess('TTS generert successfully!');
+                        } else {
+                            showSuccess('TTS prosessering ferdig!');
+                        }
+                        
+                    } catch (error) {
+                        showError(`TTS feilet: ${error.message}`);
+                    } finally {
+                        submitButton.disabled = false;
+                        submitButton.textContent = 'Generer tale';
+                        showProgress(false);
+                    }
+                });
+            }
         });
     </script>
 </body>
