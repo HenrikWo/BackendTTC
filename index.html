@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Frontend → Railway Test</title>
+    <title>TTS Frontend → Railway</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -18,6 +18,14 @@
             border-radius: 10px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             text-align: center;
+        }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            font-size: 16px;
         }
         button {
             background-color: #0070f3;
@@ -38,112 +46,142 @@
         .railway-button:hover {
             background-color: #e55a2e;
         }
-        #result {
-            margin-top: 20px;
-            padding: 15px;
-            background-color: #f8f9fa;
+        #progress-container {
+            display: none;
+            margin-top: 15px;
+            background-color: #eee;
             border-radius: 6px;
-            white-space: pre-wrap;
-            text-align: left;
+            overflow: hidden;
         }
-        .error {
-            background-color: #fee;
-            border: 1px solid #fcc;
+        #tts-progress {
+            height: 20px;
+            width: 0;
+            background-color: #0070f3;
+            text-align: center;
+            color: white;
+            line-height: 20px;
+            border-radius: 6px;
         }
-        .success {
-            background-color: #efe;
-            border: 1px solid #cfc;
+        #tts-status {
+            margin-top: 5px;
+            font-weight: bold;
+        }
+        #error-message {
+            color: red;
+            margin-top: 10px;
+            display: none;
+        }
+        #success-message {
+            color: green;
+            margin-top: 10px;
+            display: none;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Frontend → Railway Test</h1>
-        <p>Test kommunikasjon mellom frontend og Railway backend!</p>
-        
-        <!-- Vercel API tests -->
-        <button onclick="testHello()">Test Hello (Vercel)</button>
-        
-        <!-- Railway test -->
-        <button onclick="testRailway()" class="railway-button">Test Railway Backend</button>
-        
-        <!-- TTS test -->
-        <button onclick="testTTS()" class="railway-button">Test TTS (Railway)</button>
-        
-        <div id="result"></div>
+        <h1>TTS Frontend → Railway</h1>
+        <form id="tts-form">
+            <textarea id="tts-text" rows="4" placeholder="Skriv inn teksten her..."></textarea>
+            <br>
+            <button type="submit" id="tts-submit">Generer tale</button>
+        </form>
+
+        <div id="progress-container">
+            <div id="tts-progress">0%</div>
+            <div id="tts-status">Venter...</div>
+        </div>
+
+        <div id="error-message"></div>
+        <div id="success-message"></div>
+
+        <div id="audio-container"></div>
     </div>
 
+    <script src="tts.js"></script>
     <script>
-        function showResult(content, isError = false) {
-            const resultDiv = document.getElementById('result');
-            resultDiv.textContent = content;
-            resultDiv.className = isError ? 'error' : 'success';
+        // Denne skriptblokken er kun for å håndtere avspilling i HTML
+        function playAudio(audioUrl) {
+            const container = document.getElementById('audio-container');
+            container.innerHTML = `<audio controls src="${audioUrl}" autoplay></audio>`;
         }
 
-        async function testHello() {
-            try {
-                showResult('⏳ Tester Hello API...');
-                const response = await fetch('/api/hello');
-                const data = await response.json();
-                showResult('✅ Hello API fungerer:\n' + JSON.stringify(data, null, 2));
-            } catch (error) {
-                showResult('❌ Hello API feil:\n' + error.message, true);
+        function updateProgress(status) {
+            const progressElement = document.getElementById('tts-progress');
+            const statusElement = document.getElementById('tts-status');
+            
+            if (progressElement) {
+                const progress = status.progress || 0;
+                progressElement.style.width = `${progress}%`;
+                progressElement.textContent = `${progress}%`;
+            }
+            
+            if (statusElement) {
+                const statusText = {
+                    'queued': '🔄 I kø...',
+                    'processing': '⚙️ Prosesserer...',
+                    'loading_model': '📥 Laster modell...',
+                    'generating_audio': '🎵 Genererer lyd...',
+                    'finalizing': '✨ Ferdigstiller...',
+                    'completed': '✅ Ferdig!',
+                    'failed': '❌ Feilet'
+                };
+                
+                statusElement.textContent = statusText[status.status] || status.status;
             }
         }
 
-        async function testRailway() {
-            try {
-                showResult('⏳ Tester Railway backend via Vercel proxy...');
-                
-                const response = await fetch('/api/tts', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        text: 'Test fra frontend!'
-                    })
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        function showError(message) {
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function showSuccess(message) {
+            const successDiv = document.getElementById('success-message');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+        }
+
+        function showProgress(show) {
+            const progressDiv = document.getElementById('progress-container');
+            progressDiv.style.display = show ? 'block' : 'none';
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const ttsForm = document.getElementById('tts-form');
+            const textInput = document.getElementById('tts-text');
+            const submitButton = document.getElementById('tts-submit');
+
+            ttsForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const text = textInput.value.trim();
+                if (!text) {
+                    showError('Vennligst skriv inn tekst');
+                    return;
                 }
-                
-                const data = await response.json();
-                showResult('✅ Railway kommunikasjon fungerer!\n' + JSON.stringify(data, null, 2));
-                
-            } catch (error) {
-                showResult('❌ Railway test feil:\n' + error.message + '\n\nSjekk at Railway backend kjører!', true);
-            }
-        }
 
-        async function testTTS() {
-            try {
-                showResult('⏳ Tester TTS via Railway...');
-                
-                const response = await fetch('/api/tts', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        text: 'Hei, dette er en test av TTS systemet!'
-                    })
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                submitButton.disabled = true;
+                submitButton.textContent = 'Prosesserer...';
+                showProgress(true);
+
+                try {
+                    const result = await window.TTS.sendRequest(text);
+                    if (result.audioUrl) {
+                        playAudio(result.audioUrl);
+                        showSuccess('TTS generert!');
+                    } else {
+                        showSuccess('TTS ferdig prosessert!');
+                    }
+                } catch (error) {
+                    showError(`TTS feilet: ${error.message}`);
+                } finally {
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Generer tale';
+                    showProgress(false);
                 }
-                
-                const data = await response.json();
-                showResult('✅ TTS test fungerer!\n' + JSON.stringify(data, null, 2));
-                
-            } catch (error) {
-                showResult('❌ TTS test feil:\n' + error.message, true);
-            }
-        }
-
-        console.log('🎯 Test-side lastet!');
+            });
+        });
     </script>
 </body>
 </html>
