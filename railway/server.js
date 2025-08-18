@@ -2,29 +2,16 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const { exec, spawn } = require('child_process');
-const { promisify } = require('util');
-
-const execAsync = promisify(exec);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Paths
-const MODELS_DIR = '/app/models';
+const WYOMING_PORT = 10200;
 const AUDIO_DIR = '/tmp/audio';
-const PIPER_DIR = '/tmp/piper';
 
-// Global status
-let piperInstalled = false;
-let piperPath = null;
-
-// Setup directories
-[AUDIO_DIR, PIPER_DIR].forEach(dir => {
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-});
+// Sørg for at audio directory finnes
+if (!fs.existsSync(AUDIO_DIR)) {
+    fs.mkdirSync(AUDIO_DIR, { recursive: true });
+}
 
 // Middleware
 app.use(cors());
@@ -41,68 +28,8 @@ function getBaseUrl() {
     return 'https://backendttc-production.up.railway.app';
 }
 
-// Install Piper CLI
-async function installPiper() {
-    if (piperInstalled && piperPath && fs.existsSync(piperPath)) {
-        return { success: true, message: 'Already installed' };
-    }
-
-    try {
-        console.log('📦 Installing Piper CLI...');
-        
-        // Download Piper for Linux
-        const piperUrl = 'https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_linux_x86_64.tar.gz';
-        const downloadPath = '/tmp/piper.tar.gz';
-        
-        console.log('⬇️ Downloading Piper...');
-        await execAsync(`curl -L -o ${downloadPath} ${piperUrl}`);
-        
-        console.log('📦 Extracting Piper...');
-        await execAsync(`tar -xzf ${downloadPath} -C ${PIPER_DIR}`);
-        
-        // Find piper executable
-        const { stdout } = await execAsync(`find ${PIPER_DIR} -name "piper" -type f`);
-        piperPath = stdout.trim();
-        
-        if (!piperPath || !fs.existsSync(piperPath)) {
-            throw new Error('Piper executable not found after extraction');
-        }
-        
-        // Make executable
-        await execAsync(`chmod +x ${piperPath}`);
-        
-        console.log('✅ Piper installed at:', piperPath);
-        piperInstalled = true;
-        
-        return { success: true, message: 'Installed successfully', path: piperPath };
-
-    } catch (error) {
-        console.error('❌ Piper installation failed:', error.message);
-        return { success: false, error: error.message };
-    }
-}
-
-function checkPiperStatus() {
-    return {
-        installed: piperInstalled,
-        path: piperPath,
-        available: piperInstalled && piperPath && fs.existsSync(piperPath)
-    };
-}
-
 // Health check
 app.get('/health', (req, res) => {
-    let modelInfo = { exists: false, files: [] };
-    
-    try {
-        if (fs.existsSync(MODELS_DIR)) {
-            modelInfo.exists = true;
-            modelInfo.files = fs.readdirSync(MODELS_DIR);
-        }
-    } catch (err) {
-        modelInfo.error = err.message;
-    }
-    
     let audioInfo = { exists: false, files: [] };
     try {
         if (fs.existsSync(AUDIO_DIR)) {
@@ -118,33 +45,18 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         base_url: getBaseUrl(),
-        models_directory: MODELS_DIR,
         audio_directory: AUDIO_DIR,
-        piper_directory: PIPER_DIR,
-        models_info: modelInfo,
         audio_info: audioInfo,
-        piper_status: checkPiperStatus()
+        wyoming_port: WYOMING_PORT,
+        tts_provider: 'Wyoming Piper (Norwegian)'
     });
 });
 
-// Install Piper endpoint
-app.post('/api/install-piper', async (req, res) => {
-    try {
-        const result = await installPiper();
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            error: error.message 
-        });
-    }
-});
-
-// TTS endpoint using Piper CLI
+// TTS endpoint using Wyoming Piper
 app.post('/api/tts', async (req, res) => {
-    const { text, voice = 'default' } = req.body;
+    const { text, voice = 'no_NO-talesyntese-medium' } = req.body;
     
-    console.log('🎤 TTS Request:', text);
+    console.log('🎤 TTS Request (Wyoming Piper):', text);
     
     if (!text) {
         return res.status(400).json({ error: 'Text is required' });
@@ -158,44 +70,6 @@ app.post('/api/tts', async (req, res) => {
         });
     }
     
-    // Check Piper availability
-    const piperStatus = checkPiperStatus();
-    console.log('🔍 Piper Status:', piperStatus);
-    
-    // Auto-install Piper if needed
-    if (!piperStatus.available) {
-        console.log('📦 Auto-installing Piper CLI...');
-        const installResult = await installPiper();
-        console.log('📦 Install result:', installResult);
-        
-        if (!installResult.success) {
-            console.log('🌐 Falling back to Google TTS...');
-            return await fallbackToGoogleTTS(res, text);
-        }
-    }
-    
-    // Check models
-    let modelStatus = { available: false, models: [] };
-    try {
-        if (fs.existsSync(MODELS_DIR)) {
-            const files = fs.readdirSync(MODELS_DIR);
-            const onnxModels = files.filter(f => f.endsWith('.onnx'));
-            
-            modelStatus = {
-                available: onnxModels.length > 0,
-                models: onnxModels,
-                total_files: files.length
-            };
-        }
-    } catch (err) {
-        console.log('❌ Model check error:', err.message);
-    }
-    
-    if (!modelStatus.available) {
-        console.log('🌐 No models found, falling back to Google TTS...');
-        return await fallbackToGoogleTTS(res, text);
-    }
-    
     const jobId = 'tts_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     
     const job = {
@@ -205,18 +79,20 @@ app.post('/api/tts', async (req, res) => {
         status: 'queued',
         progress: 0,
         createdAt: new Date().toISOString(),
-        modelStatus: modelStatus,
-        piperStatus: checkPiperStatus(),
-        ttsProvider: 'Piper CLI'
+        ttsProvider: 'Wyoming Piper (Norwegian)'
     };
     
     jobs.set(jobId, job);
     
-    // Start Piper TTS processing
-    console.log('🤖 Starting Piper CLI TTS...');
-    processPiperTTS(jobId, text, voice).catch(error => {
-        console.error(`❌ Piper failed:`, error);
-        fallbackJobToGoogle(jobId, text, voice);
+    // Start Wyoming Piper TTS processing
+    console.log('🤖 Starting Wyoming Piper TTS...');
+    processWyomingTTS(jobId, text, voice).catch(error => {
+        console.error(`❌ Wyoming Piper failed:`, error);
+        const job = jobs.get(jobId);
+        if (job) {
+            job.status = 'failed';
+            job.error = error.message;
+        }
     });
     
     res.json({
@@ -224,103 +100,65 @@ app.post('/api/tts', async (req, res) => {
         jobId: jobId,
         status: job.status,
         provider_decision: {
-            will_use_piper: true,
-            piper_available: piperStatus.available,
-            models_available: modelStatus.available
+            will_use_wyoming: true,
+            voice: voice
         },
-        estimated_completion: '5-15 sekunder'
+        estimated_completion: '5-10 sekunder'
     });
 });
 
-// Piper CLI TTS processing
-async function processPiperTTS(jobId, text, voice) {
+// Wyoming Piper TTS processing
+async function processWyomingTTS(jobId, text, voice) {
     const job = jobs.get(jobId);
     if (!job) return;
     
     try {
-        console.log(`🤖 [${jobId}] Starting Piper CLI TTS`);
+        console.log(`🤖 [${jobId}] Starting Wyoming Piper TTS`);
         
         job.status = 'processing';
-        job.progress = 10;
-        
-        if (!piperPath || !fs.existsSync(piperPath)) {
-            throw new Error('Piper CLI not available');
-        }
-        
         job.progress = 20;
-        job.status = 'loading_model';
-        
-        // Find model file
-        const files = fs.readdirSync(MODELS_DIR);
-        const onnxFile = files.find(f => f.endsWith('.onnx'));
-        
-        if (!onnxFile) {
-            throw new Error('No .onnx model file found');
-        }
-        
-        const modelPath = path.join(MODELS_DIR, onnxFile);
-        console.log(`📂 [${jobId}] Using model: ${modelPath}`);
         
         job.progress = 40;
         job.status = 'generating_audio';
         
-        // Generate output file
-        const audioFilename = `${jobId}_piper.wav`;
-        const audioPath = path.join(AUDIO_DIR, audioFilename);
-        
-        console.log(`🗣️ [${jobId}] Running Piper CLI...`);
+        console.log(`🗣️ [${jobId}] Calling Wyoming Piper API...`);
         console.log(`📝 [${jobId}] Text: "${text}"`);
         
-        // Run Piper CLI
-        const piperProcess = spawn(piperPath, [
-            '--model', modelPath,
-            '--output-file', audioPath
-        ], {
-            stdio: ['pipe', 'pipe', 'pipe']
+        // Call Wyoming Piper HTTP API
+        const wyomingUrl = `http://localhost:${WYOMING_PORT}/api/tts`;
+        
+        const response = await fetch(wyomingUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                text: text,
+                voice: voice
+            })
         });
         
-        // Send text to stdin
-        piperProcess.stdin.write(text);
-        piperProcess.stdin.end();
+        if (!response.ok) {
+            throw new Error(`Wyoming Piper API error: ${response.status} ${response.statusText}`);
+        }
         
-        let stdout = '';
-        let stderr = '';
-        
-        piperProcess.stdout.on('data', (data) => {
-            stdout += data.toString();
-        });
-        
-        piperProcess.stderr.on('data', (data) => {
-            stderr += data.toString();
-        });
-        
-        // Wait for process to complete
-        await new Promise((resolve, reject) => {
-            piperProcess.on('close', (code) => {
-                if (code === 0) {
-                    resolve();
-                } else {
-                    reject(new Error(`Piper process exited with code ${code}. stderr: ${stderr}`));
-                }
-            });
-            
-            piperProcess.on('error', reject);
-        });
-        
-        job.progress = 90;
+        job.progress = 80;
         job.status = 'finalizing';
         
-        // Check if file was created
-        if (!fs.existsSync(audioPath)) {
-            throw new Error('Piper did not create output file');
+        // Get audio data
+        const audioBuffer = await response.arrayBuffer();
+        
+        if (audioBuffer.byteLength === 0) {
+            throw new Error('Wyoming Piper returned empty audio');
         }
         
-        const stats = fs.statSync(audioPath);
-        console.log(`💾 [${jobId}] Audio file created: ${stats.size} bytes`);
+        // Save audio file
+        const audioFilename = `${jobId}_wyoming.wav`;
+        const audioPath = path.join(AUDIO_DIR, audioFilename);
         
-        if (stats.size === 0) {
-            throw new Error('Piper created empty audio file');
-        }
+        fs.writeFileSync(audioPath, Buffer.from(audioBuffer));
+        
+        console.log(`💾 [${jobId}] Audio file saved: ${audioBuffer.byteLength} bytes`);
         
         const baseUrl = getBaseUrl();
         const audioUrl = `${baseUrl}/audio/${audioFilename}`;
@@ -330,10 +168,9 @@ async function processPiperTTS(jobId, text, voice) {
         job.audioUrl = audioUrl;
         job.audioPath = audioPath;
         job.completedAt = new Date().toISOString();
-        job.modelUsed = onnxFile;
-        job.ttsProvider = 'Piper CLI (success)';
+        job.ttsProvider = 'Wyoming Piper (Norwegian success)';
         
-        console.log(`🎉 [${jobId}] Piper CLI TTS completed successfully: ${audioUrl}`);
+        console.log(`🎉 [${jobId}] Wyoming Piper TTS completed successfully: ${audioUrl}`);
         
         // Cleanup after 5 minutes
         setTimeout(() => {
@@ -349,104 +186,9 @@ async function processPiperTTS(jobId, text, voice) {
         }, 5 * 60 * 1000);
         
     } catch (error) {
-        console.error(`❌ [${jobId}] Piper CLI TTS failed:`, error);
-        throw error;
-    }
-}
-
-// Fallback to Google TTS for individual job
-async function fallbackJobToGoogle(jobId, text, voice) {
-    const job = jobs.get(jobId);
-    if (!job) return;
-    
-    try {
-        console.log(`🌐 [${jobId}] Google TTS fallback`);
-        
-        job.status = 'generating_audio';
-        job.progress = 60;
-        job.ttsProvider = 'Google TTS (fallback)';
-        
-        const audioFilename = `${jobId}_google.mp3`;
-        const audioPath = path.join(AUDIO_DIR, audioFilename);
-        
-        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=no&client=tw-ob&q=${encodeURIComponent(text)}`;
-        
-        const response = await fetch(ttsUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
-        
-        if (!response.ok) {
-            throw new Error(`Google TTS error: ${response.status}`);
-        }
-        
-        const audioBuffer = await response.arrayBuffer();
-        fs.writeFileSync(audioPath, Buffer.from(audioBuffer));
-        
-        const baseUrl = getBaseUrl();
-        const audioUrl = `${baseUrl}/audio/${audioFilename}`;
-        
-        job.status = 'completed';
-        job.progress = 100;
-        job.audioUrl = audioUrl;
-        job.audioPath = audioPath;
-        job.completedAt = new Date().toISOString();
-        
-        console.log(`✅ [${jobId}] Google TTS completed: ${audioUrl}`);
-        
-        // Cleanup
-        setTimeout(() => {
-            try {
-                if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
-                jobs.delete(jobId);
-            } catch (err) {
-                console.error(`❌ [${jobId}] Cleanup error:`, err.message);
-            }
-        }, 5 * 60 * 1000);
-        
-    } catch (error) {
-        console.error(`❌ [${jobId}] Google TTS failed:`, error);
+        console.error(`❌ [${jobId}] Wyoming Piper TTS failed:`, error);
         job.status = 'failed';
-        job.error = `TTS failed: ${error.message}`;
-    }
-}
-
-// Direct Google TTS fallback for immediate response
-async function fallbackToGoogleTTS(res, text) {
-    try {
-        const audioFilename = `google_${Date.now()}.mp3`;
-        const audioPath = path.join(AUDIO_DIR, audioFilename);
-        
-        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=no&client=tw-ob&q=${encodeURIComponent(text)}`;
-        
-        const response = await fetch(ttsUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
-        
-        if (!response.ok) {
-            throw new Error(`Google TTS error: ${response.status}`);
-        }
-        
-        const audioBuffer = await response.arrayBuffer();
-        fs.writeFileSync(audioPath, Buffer.from(audioBuffer));
-        
-        const baseUrl = getBaseUrl();
-        const audioUrl = `${baseUrl}/audio/${audioFilename}`;
-        
-        return res.json({
-            message: 'TTS completed (Google fallback)',
-            audioUrl: audioUrl,
-            ttsProvider: 'Google TTS (fallback)',
-            status: 'completed'
-        });
-        
-    } catch (error) {
-        return res.status(500).json({ 
-            error: `TTS failed: ${error.message}` 
-        });
+        job.error = error.message;
     }
 }
 
@@ -480,24 +222,9 @@ setInterval(() => {
 }, 60 * 60 * 1000);
 
 // Start server
-app.listen(PORT, async () => {
-    console.log(`🚀 Railway Piper CLI Backend running on port ${PORT}`);
+app.listen(PORT, () => {
+    console.log(`🚀 Wyoming Piper Wrapper running on port ${PORT}`);
     console.log(`🔗 Health: ${getBaseUrl()}/health`);
-    console.log(`📦 Install Piper: POST ${getBaseUrl()}/api/install-piper`);
-    
-    // Try auto-install on startup
-    console.log('🔍 Checking Piper CLI...');
-    const installResult = await installPiper();
-    console.log('📦 Startup Piper install:', installResult);
-    
-    // Check models
-    if (fs.existsSync(MODELS_DIR)) {
-        const files = fs.readdirSync(MODELS_DIR);
-        const onnxFiles = files.filter(f => f.endsWith('.onnx'));
-        console.log(`📦 ONNX Models found:`, onnxFiles);
-        
-        if (onnxFiles.length > 0) {
-            console.log(`🎯 Ready for Piper CLI TTS with Norwegian model!`);
-        }
-    }
+    console.log(`🇳🇴 Norwegian TTS via Wyoming Piper on port ${WYOMING_PORT}`);
+    console.log(`🎯 Ready for Norwegian text-to-speech!`);
 });
