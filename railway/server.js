@@ -25,16 +25,38 @@ app.use('/audio', express.static(AUDIO_DIR));
 // In-memory job storage
 const jobs = new Map();
 
-// Get Railway public domain (fallback til hardkodet hvis ikke tilgjengelig)
+// Get Railway public domain
 function getBaseUrl() {
-    // Railway setter automatisk RAILWAY_PUBLIC_DOMAIN
     const publicDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
     if (publicDomain) {
         return `https://${publicDomain}`;
     }
-    
-    // Fallback til din kjente Railway URL
     return 'https://backendttc-production.up.railway.app';
+}
+
+// Install ONNX Runtime hvis det ikke finnes
+async function ensureOnnxRuntime() {
+    try {
+        require('onnxruntime-node');
+        console.log('✅ ONNX Runtime allerede installert');
+        return true;
+    } catch (err) {
+        console.log('📦 Installerer ONNX Runtime...');
+        
+        // Prøv å installere onnxruntime-node dynamisk
+        const { exec } = require('child_process');
+        return new Promise((resolve) => {
+            exec('npm install onnxruntime-node', (error, stdout, stderr) => {
+                if (error) {
+                    console.error('❌ Kunne ikke installere ONNX Runtime:', error.message);
+                    resolve(false);
+                } else {
+                    console.log('✅ ONNX Runtime installert');
+                    resolve(true);
+                }
+            });
+        });
+    }
 }
 
 // Health check
@@ -69,9 +91,19 @@ app.get('/health', (req, res) => {
         models_directory: MODELS_DIR,
         audio_directory: AUDIO_DIR,
         models_info: modelInfo,
-        audio_info: audioInfo
+        audio_info: audioInfo,
+        onnx_support: checkOnnxSupport()
     });
 });
+
+function checkOnnxSupport() {
+    try {
+        require('onnxruntime-node');
+        return { available: true };
+    } catch (err) {
+        return { available: false, error: err.message };
+    }
+}
 
 // List available models
 app.get('/api/models', (req, res) => {
@@ -106,7 +138,8 @@ app.get('/api/models', (req, res) => {
             models: modelInfo,
             total_files: files.length,
             model_files: modelFiles.length,
-            directory: MODELS_DIR
+            directory: MODELS_DIR,
+            onnx_support: checkOnnxSupport()
         });
         
     } catch (error) {
@@ -118,148 +151,7 @@ app.get('/api/models', (req, res) => {
     }
 });
 
-// Download modeller fra Google Drive med forbedret feilhåndtering
-app.post('/api/download-models', async (req, res) => {
-    // Filene vi vil laste ned - oppdaterte Google Drive direktelinker
-    const files = [
-        {
-            // Alternativ URL format for Google Drive
-            url: 'https://drive.usercontent.google.com/download?id=1I28oJZCG9FuWut1cmCltAPMQMJULo9PV&export=download&confirm=1',
-            filename: 'no_NO-talesyntese-medium.onnx',
-            expectedSize: 50 * 1024 * 1024 // 50MB forventet størrelse
-        },
-        {
-            url: 'https://drive.usercontent.google.com/download?id=1dPk-LRdL2KtWJsEj_ExyFYUEbQclm2n3&export=download&confirm=1',
-            filename: 'no_NO-talesyntese-medium.onnx.json',
-            expectedSize: 1024 // 1KB forventet størrelse
-        }
-    ];
-
-    try {
-        // Sørg for at models directory finnes
-        if (!fs.existsSync(MODELS_DIR)) {
-            console.log('📁 Creating models directory:', MODELS_DIR);
-            fs.mkdirSync(MODELS_DIR, { recursive: true });
-        }
-
-        const downloadResults = [];
-
-        for (const file of files) {
-            try {
-                console.log('⬇️ Starting download:', file.filename);
-                console.log('📍 URL:', file.url);
-
-                // Sjekk om filen allerede eksisterer
-                const filePath = path.join(MODELS_DIR, file.filename);
-                if (fs.existsSync(filePath)) {
-                    const stats = fs.statSync(filePath);
-                    console.log('📄 File already exists:', file.filename, `(${Math.round(stats.size / 1024 / 1024 * 100) / 100} MB)`);
-                    
-                    downloadResults.push({
-                        filename: file.filename,
-                        status: 'already_exists',
-                        size: Math.round(stats.size / 1024 / 1024 * 100) / 100 + ' MB'
-                    });
-                    continue;
-                }
-
-                // Forsøk nedlasting med timeout
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minutter timeout
-
-                const response = await fetch(file.url, {
-                    method: 'GET',
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (compatible; Railway-TTS-Bot/1.0)'
-                    },
-                    signal: controller.signal
-                });
-
-                clearTimeout(timeoutId);
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-
-                // Sjekk Content-Type
-                const contentType = response.headers.get('content-type');
-                console.log('📋 Content-Type:', contentType);
-
-                // Sjekk om vi får HTML (mulig feilside fra Google Drive)
-                if (contentType && contentType.includes('text/html')) {
-                    throw new Error('Received HTML instead of file - possibly blocked by Google Drive');
-                }
-
-                const contentLength = response.headers.get('content-length');
-                if (contentLength) {
-                    console.log('📏 Expected size:', Math.round(parseInt(contentLength) / 1024 / 1024 * 100) / 100, 'MB');
-                }
-
-                // Last ned filen
-                const buffer = await response.arrayBuffer();
-                
-                // Valider filstørrelse
-                if (buffer.byteLength < 100) {
-                    throw new Error('Downloaded file is too small - likely an error page');
-                }
-
-                // Skriv til disk
-                fs.writeFileSync(filePath, Buffer.from(buffer));
-
-                const sizeMB = Math.round(buffer.byteLength / (1024 * 1024) * 100) / 100;
-                console.log('✅ Downloaded successfully:', file.filename, '-', sizeMB, 'MB');
-
-                downloadResults.push({
-                    filename: file.filename,
-                    status: 'downloaded',
-                    size: sizeMB + ' MB'
-                });
-
-            } catch (error) {
-                console.error('❌ Download failed for', file.filename, ':', error.message);
-                
-                downloadResults.push({
-                    filename: file.filename,
-                    status: 'failed',
-                    error: error.message
-                });
-            }
-        }
-
-        // Sjekk resultater
-        const successful = downloadResults.filter(r => r.status === 'downloaded' || r.status === 'already_exists');
-        const failed = downloadResults.filter(r => r.status === 'failed');
-
-        if (successful.length === files.length) {
-            res.json({ 
-                message: 'All models ready!',
-                results: downloadResults,
-                total_files: successful.length
-            });
-        } else if (successful.length > 0) {
-            res.json({ 
-                message: `Partial success: ${successful.length}/${files.length} files ready`,
-                results: downloadResults,
-                successful: successful.length,
-                failed: failed.length
-            });
-        } else {
-            res.status(500).json({ 
-                error: 'All downloads failed',
-                results: downloadResults
-            });
-        }
-
-    } catch (error) {
-        console.error('❌ Download process failed:', error);
-        res.status(500).json({ 
-            error: 'Download process failed',
-            details: error.message
-        });
-    }
-});
-
-// TTS endpoint med modell-sjekk
+// TTS endpoint med ONNX modell
 app.post('/api/tts', async (req, res) => {
     const { text, voice = 'default' } = req.body;
     
@@ -269,8 +161,16 @@ app.post('/api/tts', async (req, res) => {
         return res.status(400).json({ error: 'Text is required' });
     }
     
-    // Sjekk om modeller er tilgjengelige
-    let modelStatus = { available: false, models: [] };
+    if (text.length > 500) {
+        return res.status(400).json({ 
+            error: 'Text is too long. Maximum 500 characters.',
+            length: text.length,
+            max: 500
+        });
+    }
+    
+    // Sjekk om ONNX modeller er tilgjengelige
+    let modelStatus = { available: false, models: [], configs: [] };
     try {
         if (fs.existsSync(MODELS_DIR)) {
             const files = fs.readdirSync(MODELS_DIR);
@@ -288,6 +188,16 @@ app.post('/api/tts', async (req, res) => {
         console.log('Could not check models:', err.message);
     }
     
+    if (!modelStatus.available) {
+        return res.status(400).json({ 
+            error: 'ONNX models not available',
+            models_found: modelStatus.models.length,
+            configs_found: modelStatus.configs.length,
+            directory: MODELS_DIR,
+            suggestion: 'Sjekk at både .onnx og .json filer finnes i models directory'
+        });
+    }
+    
     // Generer unik jobb-ID
     const jobId = 'tts_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     
@@ -299,13 +209,14 @@ app.post('/api/tts', async (req, res) => {
         status: 'queued',
         progress: 0,
         createdAt: new Date().toISOString(),
-        modelStatus: modelStatus
+        modelStatus: modelStatus,
+        ttsProvider: 'ONNX Local Models'
     };
     
     jobs.set(jobId, job);
     
     // Start prosessering (asynkront)
-    processTTS(jobId, text, voice).catch(error => {
+    processOnnxTTS(jobId, text, voice).catch(error => {
         console.error(`TTS processing error for job ${jobId}:`, error);
         const job = jobs.get(jobId);
         if (job) {
@@ -319,7 +230,10 @@ app.post('/api/tts', async (req, res) => {
         jobId: jobId,
         status: job.status,
         modelStatus: modelStatus,
-        estimated_completion: modelStatus.available ? '10-30 sekunder' : 'Models må lastes ned først'
+        ttsProvider: 'ONNX Local Models',
+        estimated_completion: '10-30 sekunder',
+        textLength: text.length,
+        maxLength: 500
     });
 });
 
@@ -334,79 +248,158 @@ app.get('/api/job/:jobId', (req, res) => {
     res.json(job);
 });
 
-// Mock TTS processing function
-async function processTTS(jobId, text, voice) {
+// ONNX TTS processing function
+async function processOnnxTTS(jobId, text, voice) {
     const job = jobs.get(jobId);
     if (!job) return;
     
     try {
-        // Update status
         job.status = 'processing';
         job.progress = 10;
         
-        console.log(`🔄 Processing TTS for job ${jobId}: "${text}"`);
+        console.log(`🔄 Processing ONNX TTS for job ${jobId}: "${text}"`);
         
-        // Sjekk om modeller er tilgjengelige
-        const modelsAvailable = fs.existsSync(MODELS_DIR) && 
-            fs.readdirSync(MODELS_DIR).some(f => f.endsWith('.onnx'));
-        
-        if (!modelsAvailable) {
-            throw new Error('No ONNX models available. Please download models first.');
+        // Sjekk ONNX Runtime
+        const onnxSupport = checkOnnxSupport();
+        if (!onnxSupport.available) {
+            // Prøv fallback til Google TTS
+            console.log('⚠️ ONNX ikke tilgjengelig, bruker Google TTS fallback');
+            return await fallbackToGoogleTTS(jobId, text, voice);
         }
         
-        // Mock processing steps
-        await sleep(2000);
-        job.progress = 30;
+        job.progress = 20;
         job.status = 'loading_model';
         
-        await sleep(3000);
+        // Last ONNX model
+        const ort = require('onnxruntime-node');
+        
+        // Finn første ONNX modell
+        const files = fs.readdirSync(MODELS_DIR);
+        const onnxFile = files.find(f => f.endsWith('.onnx'));
+        const configFile = files.find(f => f.endsWith('.json'));
+        
+        if (!onnxFile || !configFile) {
+            throw new Error('ONNX model eller config fil ikke funnet');
+        }
+        
+        const modelPath = path.join(MODELS_DIR, onnxFile);
+        const configPath = path.join(MODELS_DIR, configFile);
+        
+        console.log(`📁 Loading ONNX model: ${onnxFile}`);
+        console.log(`⚙️ Loading config: ${configFile}`);
+        
+        // Last config
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        console.log('⚙️ Model config loaded:', Object.keys(config));
+        
+        job.progress = 40;
+        
+        // Last ONNX session
+        const session = await ort.InferenceSession.create(modelPath);
+        console.log('🤖 ONNX session created');
+        
         job.progress = 60;
         job.status = 'generating_audio';
         
-        await sleep(2000);
+        // Her må vi implementere text preprocessing og phoneme conversion
+        // Dette er modell-spesifikt og avhenger av hvordan din ONNX modell er trent
+        
+        // For nå, la oss prøve en enkel tilnærming
+        const textIds = textToIds(text, config);
+        console.log('📝 Text converted to IDs:', textIds.slice(0, 10), '...');
+        
+        job.progress = 80;
+        
+        // Kjør inferens
+        const inputTensor = new ort.Tensor('int64', new BigInt64Array(textIds.map(id => BigInt(id))), [1, textIds.length]);
+        const feeds = { input: inputTensor };
+        
+        console.log('🧠 Running ONNX inference...');
+        const results = await session.run(feeds);
+        
         job.progress = 90;
         job.status = 'finalizing';
         
-        // Generer mock WAV fil
+        // Hent audio output (må tilpasses din modell)
+        const audioOutput = results.output || results.audio || Object.values(results)[0];
+        
+        if (!audioOutput) {
+            throw new Error('Ingen audio output fra ONNX modell');
+        }
+        
+        console.log('🎵 Audio generated, shape:', audioOutput.dims);
+        
+        // Konverter til WAV
         const audioFilename = `${jobId}.wav`;
         const audioPath = path.join(AUDIO_DIR, audioFilename);
         
-        // Lag en enkel mock WAV fil (44.1kHz, 16-bit, mono, 2 sekunder med silence)
-        const sampleRate = 44100;
-        const duration = 2; // sekunder
-        const numSamples = sampleRate * duration;
-        const bufferSize = 44 + numSamples * 2; // WAV header + data
+        await saveAsWav(audioOutput.data, audioPath, config.sample_rate || 22050);
         
-        const buffer = Buffer.alloc(bufferSize);
+        console.log(`💾 Audio saved: ${audioPath}`);
         
-        // WAV header
-        buffer.write('RIFF', 0);
-        buffer.writeUInt32LE(bufferSize - 8, 4);
-        buffer.write('WAVE', 8);
-        buffer.write('fmt ', 12);
-        buffer.writeUInt32LE(16, 16); // PCM chunk size
-        buffer.writeUInt16LE(1, 20); // PCM format
-        buffer.writeUInt16LE(1, 22); // Mono
-        buffer.writeUInt32LE(sampleRate, 24);
-        buffer.writeUInt32LE(sampleRate * 2, 28); // Byte rate
-        buffer.writeUInt16LE(2, 32); // Block align
-        buffer.writeUInt16LE(16, 34); // Bits per sample
-        buffer.write('data', 36);
-        buffer.writeUInt32LE(numSamples * 2, 40);
+        // Generer URL
+        const baseUrl = getBaseUrl();
+        const audioUrl = `${baseUrl}/audio/${audioFilename}`;
         
-        // Generer enkel tone i stedet for stillhet (så vi kan høre at det funker)
-        const frequency = 440; // A note
-        for (let i = 0; i < numSamples; i++) {
-            const sample = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.3; // 30% volume
-            const value = Math.round(sample * 32767);
-            buffer.writeInt16LE(value, 44 + i * 2);
+        job.status = 'completed';
+        job.progress = 100;
+        job.audioUrl = audioUrl;
+        job.audioPath = audioPath;
+        job.completedAt = new Date().toISOString();
+        job.modelUsed = onnxFile;
+        
+        console.log(`✅ ONNX TTS job ${jobId} completed - Audio URL: ${audioUrl}`);
+        
+        // Cleanup etter 5 minutter
+        setTimeout(() => {
+            try {
+                if (fs.existsSync(audioPath)) {
+                    fs.unlinkSync(audioPath);
+                    console.log(`🗑️ Cleaned up audio file: ${audioFilename}`);
+                }
+                jobs.delete(jobId);
+            } catch (err) {
+                console.error(`❌ Cleanup error:`, err.message);
+            }
+        }, 5 * 60 * 1000);
+        
+    } catch (error) {
+        console.error(`❌ ONNX TTS error for job ${jobId}:`, error);
+        
+        // Prøv fallback til Google TTS
+        console.log('🔄 Falling back to Google TTS...');
+        return await fallbackToGoogleTTS(jobId, text, voice);
+    }
+}
+
+// Fallback til Google TTS hvis ONNX feiler
+async function fallbackToGoogleTTS(jobId, text, voice) {
+    const job = jobs.get(jobId);
+    if (!job) return;
+    
+    try {
+        job.status = 'generating_audio';
+        job.progress = 60;
+        job.ttsProvider = 'Google TTS (fallback)';
+        
+        const audioFilename = `${jobId}.mp3`;
+        const audioPath = path.join(AUDIO_DIR, audioFilename);
+        
+        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=no&client=tw-ob&q=${encodeURIComponent(text)}`;
+        
+        const response = await fetch(ttsUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`TTS API error: ${response.status}`);
         }
         
-        // Skriv filen
-        fs.writeFileSync(audioPath, buffer);
-        console.log(`🎵 Generated mock audio file: ${audioPath}`);
+        const audioBuffer = await response.arrayBuffer();
+        fs.writeFileSync(audioPath, Buffer.from(audioBuffer));
         
-        // Generer riktig URL
         const baseUrl = getBaseUrl();
         const audioUrl = `${baseUrl}/audio/${audioFilename}`;
         
@@ -416,61 +409,100 @@ async function processTTS(jobId, text, voice) {
         job.audioPath = audioPath;
         job.completedAt = new Date().toISOString();
         
-        console.log(`✅ TTS job ${jobId} completed - Audio URL: ${audioUrl}`);
+        console.log(`✅ Fallback TTS completed: ${audioUrl}`);
         
-        // Sett opp automatisk sletting etter 5 minutter
+        // Cleanup
         setTimeout(() => {
             try {
-                if (fs.existsSync(audioPath)) {
-                    fs.unlinkSync(audioPath);
-                    console.log(`🗑️ Cleaned up audio file: ${audioFilename}`);
-                }
+                if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
                 jobs.delete(jobId);
-                console.log(`🧹 Cleaned up job: ${jobId}`);
             } catch (err) {
-                console.error(`❌ Cleanup error for ${jobId}:`, err.message);
+                console.error(`❌ Cleanup error:`, err.message);
             }
-        }, 5 * 60 * 1000); // 5 minutter
+        }, 5 * 60 * 1000);
         
     } catch (error) {
-        console.error(`❌ TTS processing error for job ${jobId}:`, error);
+        console.error(`❌ Fallback TTS failed:`, error);
         job.status = 'failed';
-        job.error = error.message;
+        job.error = `Both ONNX and fallback failed: ${error.message}`;
     }
+}
+
+// Enkel text-to-IDs funksjon (må tilpasses din modell)
+function textToIds(text, config) {
+    // Dette er en placeholder - du må implementere riktig text preprocessing
+    // basert på din modells config og vocab
+    
+    const cleanText = text.toLowerCase()
+        .replace(/[.,!?;:]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    
+    // Enkel character-to-ID mapping (må erstattes med riktig vocab)
+    const charToId = {
+        ' ': 0, 'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8, 'i': 9,
+        'j': 10, 'k': 11, 'l': 12, 'm': 13, 'n': 14, 'o': 15, 'p': 16, 'q': 17, 'r': 18,
+        's': 19, 't': 20, 'u': 21, 'v': 22, 'w': 23, 'x': 24, 'y': 25, 'z': 26,
+        'æ': 27, 'ø': 28, 'å': 29
+    };
+    
+    return cleanText.split('').map(char => charToId[char] || 0);
+}
+
+// Enkel WAV fil saver
+async function saveAsWav(audioData, outputPath, sampleRate = 22050) {
+    // Konverter Float32Array til 16-bit PCM
+    const audioArray = Array.from(audioData);
+    const buffer = Buffer.alloc(44 + audioArray.length * 2);
+    
+    // WAV header
+    buffer.write('RIFF', 0);
+    buffer.writeUInt32LE(36 + audioArray.length * 2, 4);
+    buffer.write('WAVE', 8);
+    buffer.write('fmt ', 12);
+    buffer.writeUInt32LE(16, 16);
+    buffer.writeUInt16LE(1, 20);
+    buffer.writeUInt16LE(1, 22);
+    buffer.writeUInt32LE(sampleRate, 24);
+    buffer.writeUInt32LE(sampleRate * 2, 28);
+    buffer.writeUInt16LE(2, 32);
+    buffer.writeUInt16LE(16, 34);
+    buffer.write('data', 36);
+    buffer.writeUInt32LE(audioArray.length * 2, 40);
+    
+    // Audio data
+    for (let i = 0; i < audioArray.length; i++) {
+        const sample = Math.max(-1, Math.min(1, audioArray[i]));
+        buffer.writeInt16LE(Math.round(sample * 32767), 44 + i * 2);
+    }
+    
+    fs.writeFileSync(outputPath, buffer);
 }
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Clean up models directory
-app.delete('/api/models', (req, res) => {
+// Install ONNX Runtime endpoint
+app.post('/api/install-onnx', async (req, res) => {
     try {
-        if (fs.existsSync(MODELS_DIR)) {
-            const files = fs.readdirSync(MODELS_DIR);
-            let deleted = 0;
-            
-            files.forEach(file => {
-                const filePath = path.join(MODELS_DIR, file);
-                try {
-                    fs.unlinkSync(filePath);
-                    deleted++;
-                    console.log('🗑️ Deleted:', file);
-                } catch (err) {
-                    console.log('❌ Could not delete:', file, err.message);
-                }
-            });
-            
-            res.json({
-                message: `Cleaned up models directory`,
-                deleted_files: deleted,
-                remaining_files: fs.readdirSync(MODELS_DIR).length
+        const success = await ensureOnnxRuntime();
+        if (success) {
+            res.json({ 
+                message: 'ONNX Runtime installed successfully',
+                status: 'ready'
             });
         } else {
-            res.json({ message: 'Models directory does not exist' });
+            res.status(500).json({ 
+                error: 'Failed to install ONNX Runtime',
+                suggestion: 'Restart the application or check logs'
+            });
         }
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ 
+            error: 'Installation failed',
+            details: error.message
+        });
     }
 });
 
@@ -480,7 +512,6 @@ setInterval(() => {
     
     for (const [jobId, job] of jobs.entries()) {
         if (new Date(job.createdAt).getTime() < oneHourAgo) {
-            // Clean up audio file if it exists
             if (job.audioPath && fs.existsSync(job.audioPath)) {
                 try {
                     fs.unlinkSync(job.audioPath);
@@ -495,62 +526,43 @@ setInterval(() => {
     }
 }, 60 * 60 * 1000);
 
-// Clean up orphaned audio files on startup
-function cleanupOrphanedFiles() {
-    try {
-        if (fs.existsSync(AUDIO_DIR)) {
-            const files = fs.readdirSync(AUDIO_DIR);
-            files.forEach(file => {
-                const filePath = path.join(AUDIO_DIR, file);
-                const stats = fs.statSync(filePath);
-                
-                // Slett filer som er eldre enn 1 time
-                if (Date.now() - stats.mtime.getTime() > 60 * 60 * 1000) {
-                    try {
-                        fs.unlinkSync(filePath);
-                        console.log(`🗑️ Cleaned up orphaned file: ${file}`);
-                    } catch (err) {
-                        console.error(`❌ Could not delete orphaned file ${file}:`, err.message);
-                    }
-                }
-            });
-        }
-    } catch (err) {
-        console.error('❌ Cleanup error:', err.message);
-    }
-}
-
 // Start server
-app.listen(PORT, () => {
-    console.log(`🚀 Railway TTS Backend running on port ${PORT}`);
+app.listen(PORT, async () => {
+    console.log(`🚀 Railway ONNX TTS Backend running on port ${PORT}`);
     console.log(`📁 Models directory: ${MODELS_DIR}`);
     console.log(`🎵 Audio directory: ${AUDIO_DIR}`);
     console.log(`🔗 Base URL: ${getBaseUrl()}`);
-    console.log(`🔗 Health check: ${getBaseUrl()}/health`);
-    console.log(`📥 Download models: POST /api/download-models`);
     
-    // Clean up old files on startup
-    cleanupOrphanedFiles();
+    // Sjekk ONNX support ved oppstart
+    const onnxSupport = checkOnnxSupport();
+    if (onnxSupport.available) {
+        console.log('✅ ONNX Runtime tilgjengelig');
+    } else {
+        console.log('⚠️ ONNX Runtime ikke tilgjengelig, prøver å installere...');
+        const installed = await ensureOnnxRuntime();
+        if (installed) {
+            console.log('✅ ONNX Runtime installert');
+        } else {
+            console.log('❌ ONNX Runtime installasjon feilet - bruker Google TTS fallback');
+        }
+    }
     
-    // Check volume on startup
+    // Sjekk modeller
     try {
         if (fs.existsSync(MODELS_DIR)) {
             const files = fs.readdirSync(MODELS_DIR);
-            console.log(`📦 Volume mounted! Found ${files.length} files in models directory`);
+            console.log(`📦 Found ${files.length} files in models directory:`, files);
             
-            const models = files.filter(f => f.endsWith('.onnx'));
+            const onnxModels = files.filter(f => f.endsWith('.onnx'));
             const configs = files.filter(f => f.endsWith('.json'));
             
-            if (models.length > 0 && configs.length > 0) {
-                console.log(`🤖 Ready for TTS! Models:`, models);
-                console.log(`⚙️ Config files:`, configs);
+            if (onnxModels.length > 0 && configs.length > 0) {
+                console.log(`🤖 ONNX TTS Ready! Models: ${onnxModels}, Configs: ${configs}`);
             } else {
-                console.log(`📋 Models incomplete. Use POST /api/download-models to download them.`);
-                console.log(`   Found: ${models.length} ONNX files, ${configs.length} JSON configs`);
+                console.log(`📋 Incomplete models. Found: ${onnxModels.length} ONNX, ${configs.length} JSON`);
             }
         } else {
-            console.log(`📁 Volume not mounted yet - creating directory ${MODELS_DIR}`);
-            fs.mkdirSync(MODELS_DIR, { recursive: true });
+            console.log(`📁 Models directory not found: ${MODELS_DIR}`);
         }
     } catch (err) {
         console.log(`❌ Could not access models directory:`, err.message);
