@@ -1,8 +1,13 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Volume path (Railway volume mount point)
+const MODELS_DIR = '/app/models';
 
 // Middleware
 app.use(cors());
@@ -11,13 +16,71 @@ app.use(express.json({ limit: '10mb' }));
 // In-memory job storage
 const jobs = new Map();
 
-// Health check
+// Health check med volume info
 app.get('/health', (req, res) => {
+    let modelInfo = { exists: false, files: [] };
+    
+    try {
+        if (fs.existsSync(MODELS_DIR)) {
+            modelInfo.exists = true;
+            modelInfo.files = fs.readdirSync(MODELS_DIR);
+        }
+    } catch (err) {
+        modelInfo.error = err.message;
+    }
+    
     res.json({ 
         status: 'ok', 
         uptime: process.uptime(),
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        models_directory: MODELS_DIR,
+        models_info: modelInfo
     });
+});
+
+// List available models
+app.get('/api/models', (req, res) => {
+    try {
+        if (!fs.existsSync(MODELS_DIR)) {
+            return res.json({ 
+                message: 'Models directory ikke funnet',
+                models: [],
+                directory: MODELS_DIR 
+            });
+        }
+        
+        const files = fs.readdirSync(MODELS_DIR);
+        const modelFiles = files.filter(file => 
+            file.endsWith('.onnx') || 
+            file.endsWith('.bin') || 
+            file.endsWith('.safetensors')
+        );
+        
+        const modelInfo = modelFiles.map(filename => {
+            const filePath = path.join(MODELS_DIR, filename);
+            const stats = fs.statSync(filePath);
+            
+            return {
+                filename,
+                size: Math.round(stats.size / (1024 * 1024) * 100) / 100 + ' MB',
+                modified: stats.mtime.toISOString()
+            };
+        });
+        
+        res.json({
+            models: modelInfo,
+            total_files: files.length,
+            model_files: modelFiles.length,
+            directory: MODELS_DIR
+        });
+        
+    } catch (error) {
+        res.status(500).json({ 
+            error: 'Could not read models directory',
+            details: error.message,
+            directory: MODELS_DIR
+        });
+    }
 });
 
 // Simple test endpoint
@@ -45,6 +108,17 @@ app.post('/api/tts', (req, res) => {
         return res.status(400).json({ error: 'Text is required' });
     }
     
+    // Check models directory
+    let modelCount = 0;
+    try {
+        if (fs.existsSync(MODELS_DIR)) {
+            const files = fs.readdirSync(MODELS_DIR);
+            modelCount = files.filter(f => f.endsWith('.onnx')).length;
+        }
+    } catch (err) {
+        console.log('Could not check models:', err.message);
+    }
+    
     // Simulate processing
     setTimeout(() => {
         console.log('✅ TTS prosessering ferdig for:', text);
@@ -55,7 +129,8 @@ app.post('/api/tts', (req, res) => {
         text: text,
         status: 'processing',
         railway_timestamp: new Date().toISOString(),
-        estimated_completion: '5-10 sekunder'
+        estimated_completion: '5-10 sekunder',
+        models_available: modelCount
     });
 });
 
@@ -126,5 +201,22 @@ setInterval(() => {
 
 app.listen(PORT, () => {
     console.log(`🚀 Railway TTS Backend running on port ${PORT}`);
+    console.log(`📁 Models directory: ${MODELS_DIR}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
+    
+    // Check volume on startup
+    try {
+        if (fs.existsSync(MODELS_DIR)) {
+            const files = fs.readdirSync(MODELS_DIR);
+            console.log(`📦 Volume mounted! Found ${files.length} files in models directory`);
+            const models = files.filter(f => f.endsWith('.onnx'));
+            if (models.length > 0) {
+                console.log(`🤖 ONNX models found:`, models);
+            }
+        } else {
+            console.log(`📁 Volume not mounted yet - directory ${MODELS_DIR} doesn't exist`);
+        }
+    } catch (err) {
+        console.log(`❌ Could not access models directory:`, err.message);
+    }
 });
