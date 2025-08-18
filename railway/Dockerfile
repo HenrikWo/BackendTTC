@@ -1,7 +1,9 @@
-# Debug version to find Piper binary location
+# Use Wyoming Piper base image
 FROM rhasspy/wyoming-piper:latest
 
+# Expose the port
 EXPOSE 10200
 
-# Find where piper is located
-CMD ["sh", "-c", "find / -name 'piper' -type f 2>/dev/null | head -10 && sleep 30"]
+# Use ENTRYPOINT instead of CMD
+ENTRYPOINT ["python3", "-m", "wyoming_piper"]
+CMD ["--piper", "/usr/local/bin/piper", "--voice", "no_NO-talesyntese-medium", "--uri", "tcp://0.0.0.0:10200", "--data-dir", "/app/models"]
