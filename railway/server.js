@@ -8,13 +8,34 @@ const PORT = process.env.PORT || 3000;
 
 // Volume path (Railway volume mount point)
 const MODELS_DIR = '/app/models';
+const AUDIO_DIR = '/tmp/audio'; // Midlertidig audio lagring
+
+// Sørg for at audio directory finnes
+if (!fs.existsSync(AUDIO_DIR)) {
+    fs.mkdirSync(AUDIO_DIR, { recursive: true });
+}
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Serve static audio files
+app.use('/audio', express.static(AUDIO_DIR));
+
 // In-memory job storage
 const jobs = new Map();
+
+// Get Railway public domain (fallback til hardkodet hvis ikke tilgjengelig)
+function getBaseUrl() {
+    // Railway setter automatisk RAILWAY_PUBLIC_DOMAIN
+    const publicDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
+    if (publicDomain) {
+        return `https://${publicDomain}`;
+    }
+    
+    // Fallback til din kjente Railway URL
+    return 'https://backendttc-production.up.railway.app';
+}
 
 // Health check
 app.get('/health', (req, res) => {
@@ -29,12 +50,26 @@ app.get('/health', (req, res) => {
         modelInfo.error = err.message;
     }
     
+    // Check audio directory
+    let audioInfo = { exists: false, files: [] };
+    try {
+        if (fs.existsSync(AUDIO_DIR)) {
+            audioInfo.exists = true;
+            audioInfo.files = fs.readdirSync(AUDIO_DIR);
+        }
+    } catch (err) {
+        audioInfo.error = err.message;
+    }
+    
     res.json({ 
         status: 'ok', 
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
+        base_url: getBaseUrl(),
         models_directory: MODELS_DIR,
-        models_info: modelInfo
+        audio_directory: AUDIO_DIR,
+        models_info: modelInfo,
+        audio_info: audioInfo
     });
 });
 
@@ -332,15 +367,70 @@ async function processTTS(jobId, text, voice) {
         job.progress = 90;
         job.status = 'finalizing';
         
-        // Mock completed result
-        const audioUrl = `https://example.com/audio/${jobId}.wav`;
+        // Generer mock WAV fil
+        const audioFilename = `${jobId}.wav`;
+        const audioPath = path.join(AUDIO_DIR, audioFilename);
+        
+        // Lag en enkel mock WAV fil (44.1kHz, 16-bit, mono, 2 sekunder med silence)
+        const sampleRate = 44100;
+        const duration = 2; // sekunder
+        const numSamples = sampleRate * duration;
+        const bufferSize = 44 + numSamples * 2; // WAV header + data
+        
+        const buffer = Buffer.alloc(bufferSize);
+        
+        // WAV header
+        buffer.write('RIFF', 0);
+        buffer.writeUInt32LE(bufferSize - 8, 4);
+        buffer.write('WAVE', 8);
+        buffer.write('fmt ', 12);
+        buffer.writeUInt32LE(16, 16); // PCM chunk size
+        buffer.writeUInt16LE(1, 20); // PCM format
+        buffer.writeUInt16LE(1, 22); // Mono
+        buffer.writeUInt32LE(sampleRate, 24);
+        buffer.writeUInt32LE(sampleRate * 2, 28); // Byte rate
+        buffer.writeUInt16LE(2, 32); // Block align
+        buffer.writeUInt16LE(16, 34); // Bits per sample
+        buffer.write('data', 36);
+        buffer.writeUInt32LE(numSamples * 2, 40);
+        
+        // Generer enkel tone i stedet for stillhet (så vi kan høre at det funker)
+        const frequency = 440; // A note
+        for (let i = 0; i < numSamples; i++) {
+            const sample = Math.sin(2 * Math.PI * frequency * i / sampleRate) * 0.3; // 30% volume
+            const value = Math.round(sample * 32767);
+            buffer.writeInt16LE(value, 44 + i * 2);
+        }
+        
+        // Skriv filen
+        fs.writeFileSync(audioPath, buffer);
+        console.log(`🎵 Generated mock audio file: ${audioPath}`);
+        
+        // Generer riktig URL
+        const baseUrl = getBaseUrl();
+        const audioUrl = `${baseUrl}/audio/${audioFilename}`;
         
         job.status = 'completed';
         job.progress = 100;
         job.audioUrl = audioUrl;
+        job.audioPath = audioPath;
         job.completedAt = new Date().toISOString();
         
-        console.log(`✅ TTS job ${jobId} completed`);
+        console.log(`✅ TTS job ${jobId} completed - Audio URL: ${audioUrl}`);
+        
+        // Sett opp automatisk sletting etter 5 minutter
+        setTimeout(() => {
+            try {
+                if (fs.existsSync(audioPath)) {
+                    fs.unlinkSync(audioPath);
+                    console.log(`🗑️ Cleaned up audio file: ${audioFilename}`);
+                }
+                jobs.delete(jobId);
+                console.log(`🧹 Cleaned up job: ${jobId}`);
+            } catch (err) {
+                console.error(`❌ Cleanup error for ${jobId}:`, err.message);
+            }
+        }, 5 * 60 * 1000); // 5 minutter
         
     } catch (error) {
         console.error(`❌ TTS processing error for job ${jobId}:`, error);
@@ -390,18 +480,57 @@ setInterval(() => {
     
     for (const [jobId, job] of jobs.entries()) {
         if (new Date(job.createdAt).getTime() < oneHourAgo) {
+            // Clean up audio file if it exists
+            if (job.audioPath && fs.existsSync(job.audioPath)) {
+                try {
+                    fs.unlinkSync(job.audioPath);
+                    console.log(`🗑️ Cleaned up old audio file: ${job.audioPath}`);
+                } catch (err) {
+                    console.error(`❌ Could not delete old audio file:`, err.message);
+                }
+            }
             jobs.delete(jobId);
             console.log(`🧹 Cleaned up old job: ${jobId}`);
         }
     }
 }, 60 * 60 * 1000);
 
+// Clean up orphaned audio files on startup
+function cleanupOrphanedFiles() {
+    try {
+        if (fs.existsSync(AUDIO_DIR)) {
+            const files = fs.readdirSync(AUDIO_DIR);
+            files.forEach(file => {
+                const filePath = path.join(AUDIO_DIR, file);
+                const stats = fs.statSync(filePath);
+                
+                // Slett filer som er eldre enn 1 time
+                if (Date.now() - stats.mtime.getTime() > 60 * 60 * 1000) {
+                    try {
+                        fs.unlinkSync(filePath);
+                        console.log(`🗑️ Cleaned up orphaned file: ${file}`);
+                    } catch (err) {
+                        console.error(`❌ Could not delete orphaned file ${file}:`, err.message);
+                    }
+                }
+            });
+        }
+    } catch (err) {
+        console.error('❌ Cleanup error:', err.message);
+    }
+}
+
 // Start server
 app.listen(PORT, () => {
     console.log(`🚀 Railway TTS Backend running on port ${PORT}`);
     console.log(`📁 Models directory: ${MODELS_DIR}`);
-    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+    console.log(`🎵 Audio directory: ${AUDIO_DIR}`);
+    console.log(`🔗 Base URL: ${getBaseUrl()}`);
+    console.log(`🔗 Health check: ${getBaseUrl()}/health`);
     console.log(`📥 Download models: POST /api/download-models`);
+    
+    // Clean up old files on startup
+    cleanupOrphanedFiles();
     
     // Check volume on startup
     try {
