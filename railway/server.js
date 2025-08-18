@@ -1,8 +1,37 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Volume path (Railway volume mount point)
+const MODELS_DIR = '/app/models';
+
+// Ensure models directory exists
+if (!fs.existsSync(MODELS_DIR)) {
+    fs.mkdirSync(MODELS_DIR, { recursive: true });
+    console.log('📁 Created models directory:', MODELS_DIR);
+}
+
+// Configure multer for file uploads to volume
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, MODELS_DIR);
+    },
+    filename: function (req, file, cb) {
+        cb(null, file.originalname);
+    }
+});
+
+const upload = multer({ 
+    storage: storage,
+    limits: {
+        fileSize: 500 * 1024 * 1024 // 500MB limit
+    }
+});
 
 // Middleware
 app.use(cors());
@@ -11,13 +40,134 @@ app.use(express.json({ limit: '10mb' }));
 // In-memory job storage
 const jobs = new Map();
 
-// Health check
+// Health check with volume info
 app.get('/health', (req, res) => {
+    let modelFiles = [];
+    try {
+        modelFiles = fs.readdirSync(MODELS_DIR);
+    } catch (err) {
+        console.log('Could not read models directory:', err.message);
+    }
+    
     res.json({ 
         status: 'ok', 
         uptime: process.uptime(),
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        models_directory: MODELS_DIR,
+        available_models: modelFiles
     });
+});
+
+// List available models
+app.get('/api/models', (req, res) => {
+    try {
+        const files = fs.readdirSync(MODELS_DIR);
+        const models = files.filter(file => 
+            file.endsWith('.onnx') || 
+            file.endsWith('.bin') || 
+            file.endsWith('.safetensors')
+        );
+        
+        const modelInfo = models.map(filename => {
+            const filePath = path.join(MODELS_DIR, filename);
+            const stats = fs.statSync(filePath);
+            
+            return {
+                filename,
+                size: Math.round(stats.size / (1024 * 1024) * 100) / 100 + ' MB',
+                modified: stats.mtime.toISOString()
+            };
+        });
+        
+        res.json({
+            models: modelInfo,
+            total_count: models.length
+        });
+        
+    } catch (error) {
+        res.status(500).json({ 
+            error: 'Could not read models directory',
+            details: error.message 
+        });
+    }
+});
+
+// Upload model file to volume
+app.post('/api/upload-model', upload.single('model'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+    
+    console.log('📦 Model uploaded:', req.file.filename, 
+                '- Size:', Math.round(req.file.size / (1024 * 1024) * 100) / 100, 'MB');
+    
+    res.json({
+        message: 'Model uploaded successfully!',
+        filename: req.file.filename,
+        size: Math.round(req.file.size / (1024 * 1024) * 100) / 100 + ' MB',
+        path: req.file.path
+    });
+});
+
+// Download model from URL and save to volume
+app.post('/api/download-model', async (req, res) => {
+    const { url, filename } = req.body;
+    
+    if (!url || !filename) {
+        return res.status(400).json({ error: 'URL and filename required' });
+    }
+    
+    try {
+        console.log('⬇️ Downloading model from:', url);
+        
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const buffer = await response.arrayBuffer();
+        const filePath = path.join(MODELS_DIR, filename);
+        
+        fs.writeFileSync(filePath, Buffer.from(buffer));
+        
+        console.log('✅ Model downloaded:', filename, 
+                    '- Size:', Math.round(buffer.byteLength / (1024 * 1024) * 100) / 100, 'MB');
+        
+        res.json({
+            message: 'Model downloaded successfully!',
+            filename: filename,
+            size: Math.round(buffer.byteLength / (1024 * 1024) * 100) / 100 + ' MB',
+            path: filePath
+        });
+        
+    } catch (error) {
+        console.error('❌ Download failed:', error);
+        res.status(500).json({ 
+            error: 'Download failed',
+            details: error.message 
+        });
+    }
+});
+
+// Delete model from volume
+app.delete('/api/models/:filename', (req, res) => {
+    const filename = req.params.filename;
+    const filePath = path.join(MODELS_DIR, filename);
+    
+    try {
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log('🗑️ Deleted model:', filename);
+            res.json({ message: 'Model deleted successfully', filename });
+        } else {
+            res.status(404).json({ error: 'Model not found' });
+        }
+    } catch (error) {
+        res.status(500).json({ 
+            error: 'Could not delete model',
+            details: error.message 
+        });
+    }
 });
 
 // Simple test endpoint
@@ -45,6 +195,15 @@ app.post('/api/tts', (req, res) => {
         return res.status(400).json({ error: 'Text is required' });
     }
     
+    // Check if we have any models available
+    let availableModels = [];
+    try {
+        const files = fs.readdirSync(MODELS_DIR);
+        availableModels = files.filter(file => file.endsWith('.onnx'));
+    } catch (err) {
+        console.log('Could not check models:', err.message);
+    }
+    
     // Simulate processing
     setTimeout(() => {
         console.log('✅ TTS prosessering ferdig for:', text);
@@ -55,7 +214,8 @@ app.post('/api/tts', (req, res) => {
         text: text,
         status: 'processing',
         railway_timestamp: new Date().toISOString(),
-        estimated_completion: '5-10 sekunder'
+        estimated_completion: '5-10 sekunder',
+        available_models: availableModels.length
     });
 });
 
@@ -126,5 +286,15 @@ setInterval(() => {
 
 app.listen(PORT, () => {
     console.log(`🚀 Railway TTS Backend running on port ${PORT}`);
+    console.log(`📁 Models directory: ${MODELS_DIR}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
+    
+    // List existing models on startup
+    try {
+        const files = fs.readdirSync(MODELS_DIR);
+        const models = files.filter(file => file.endsWith('.onnx'));
+        console.log(`🤖 Found ${models.length} ONNX models:`, models);
+    } catch (err) {
+        console.log('📁 Models directory is empty or not accessible');
+    }
 });
