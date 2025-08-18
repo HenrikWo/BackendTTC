@@ -1,9 +1,19 @@
-# Use Wyoming Piper base image
-FROM rhasspy/wyoming-piper:latest
+FROM python:3.11-slim
 
-# Expose the port
-EXPOSE 10200
+# Install piper CLI directly
+RUN pip install piper-tts
 
-# Use ENTRYPOINT instead of CMD
-ENTRYPOINT ["python3", "-m", "wyoming_piper"]
-CMD ["--piper", "/usr/local/bin/piper", "--voice", "no_NO-talesyntese-medium", "--uri", "tcp://0.0.0.0:10200", "--data-dir", "/app/models"]
+# Install Node.js for our API
+RUN apt-get update && apt-get install -y curl && \
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs
+
+WORKDIR /app
+COPY package.json .
+RUN npm install
+
+COPY server.js .
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]
