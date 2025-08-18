@@ -464,12 +464,24 @@ function convertUsingPhonemeMap(text, config) {
     
     const phonemeMap = config.phoneme_id_map;
     
-    // DEBUG: Log some phoneme mappings
-    console.log('🔍 Available phonemes (first 20):');
-    const phonemeKeys = Object.keys(phonemeMap).slice(0, 20);
+    // DEBUG: Log more phoneme mappings - look for letters
+    console.log('🔍 Available phonemes (first 50):');
+    const phonemeKeys = Object.keys(phonemeMap).slice(0, 50);
     for (let key of phonemeKeys) {
         console.log(`  "${key}" -> ${phonemeMap[key]}`);
     }
+    
+    // Look for Norwegian-specific phonemes
+    const letterPhonemes = Object.keys(phonemeMap).filter(k => 
+        k.length === 1 && /[a-zæøå]/.test(k)
+    );
+    console.log('🔤 Letter phonemes found:', letterPhonemes.slice(0, 20));
+    
+    // Look for common English phonemes  
+    const commonPhonemes = Object.keys(phonemeMap).filter(k => 
+        ['t', 'e', 's', 'a', 'i', 'n', 'o', 'r'].includes(k.toLowerCase())
+    );
+    console.log('📝 Common letter phonemes:', commonPhonemes);
     
     const ids = [];
     
