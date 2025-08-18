@@ -439,38 +439,87 @@ async function fallbackToGoogleTTS(jobId, text, voice) {
     }
 }
 
-// Improved text to Piper phoneme IDs conversion
+// Proper text to Piper phoneme IDs conversion
 function convertTextToPiperIds(text, config) {
-    // This is a simplified version - ideally we'd use the proper phoneme mapping
-    // from the config file, but this should work for basic testing
+    console.log(`📝 Converting text: "${text}"`);
     
+    // Use phoneme mapping from config if available
+    if (config.phoneme_id_map) {
+        console.log('📋 Using phoneme mapping from config, available phonemes:', Object.keys(config.phoneme_id_map).length);
+        return convertUsingPhonemeMap(text, config);
+    }
+    
+    // Fallback to simple character-based conversion with proper IDs
+    console.log('⚠️ No phoneme map found, using simple character mapping');
+    return convertUsingSimpleMapping(text);
+}
+
+function convertUsingPhonemeMap(text, config) {
     const cleanText = text.toLowerCase()
         .replace(/[.,!?;:]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
     
-    // Enhanced Norwegian character mapping
-    const charToId = {
-        ' ': 32,    // Space
-        'a': 97, 'b': 98, 'c': 99, 'd': 100, 'e': 101, 'f': 102, 'g': 103, 'h': 104,
-        'i': 105, 'j': 106, 'k': 107, 'l': 108, 'm': 109, 'n': 110, 'o': 111, 'p': 112,
-        'q': 113, 'r': 114, 's': 115, 't': 116, 'u': 117, 'v': 118, 'w': 119, 'x': 120,
-        'y': 121, 'z': 122,
-        'æ': 230,   // Norwegian æ
-        'ø': 248,   // Norwegian ø  
-        'å': 229    // Norwegian å
-    };
+    const phonemeMap = config.phoneme_id_map;
+    const ids = [];
     
-    // Try to use phoneme mapping from config if available
-    if (config.phoneme_id_map) {
-        console.log('📋 Using phoneme mapping from config');
-        // Could implement proper phoneme conversion here
+    // Try to convert each character to phoneme ID
+    for (let char of cleanText) {
+        if (char === ' ') {
+            // Space/pause phoneme
+            if (phonemeMap['_'] !== undefined) {
+                ids.push(phonemeMap['_']);
+            } else if (phonemeMap[' '] !== undefined) {
+                ids.push(phonemeMap[' ']);
+            } else if (phonemeMap['SIL'] !== undefined) {
+                ids.push(phonemeMap['SIL']);
+            } else {
+                ids.push(0); // Fallback silence
+            }
+        } else {
+            // Try to find phoneme for this character
+            if (phonemeMap[char] !== undefined) {
+                ids.push(phonemeMap[char]);
+            } else {
+                // Try uppercase
+                if (phonemeMap[char.toUpperCase()] !== undefined) {
+                    ids.push(phonemeMap[char.toUpperCase()]);
+                } else {
+                    console.log(`⚠️ Unknown character: "${char}", using silence`);
+                    ids.push(phonemeMap['_'] || 0);
+                }
+            }
+        }
     }
     
-    const ids = cleanText.split('').map(char => charToId[char] || 32); // Unknown chars become space
+    console.log(`📝 Phoneme conversion: "${cleanText}" -> [${ids.slice(0, 10).join(', ')}${ids.length > 10 ? ', ...' : ''}] (${ids.length} phonemes)`);
     
-    // Add start/end tokens if needed (common in TTS models)
-    return [1, ...ids, 2]; // 1 = start token, 2 = end token
+    return ids;
+}
+
+function convertUsingSimpleMapping(text) {
+    const cleanText = text.toLowerCase()
+        .replace(/[.,!?;:]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    
+    // Simple phoneme-like IDs (not ASCII values!)
+    const charToPhonemeId = {
+        ' ': 0,    // Silence
+        'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8,
+        'i': 9, 'j': 10, 'k': 11, 'l': 12, 'm': 13, 'n': 14, 'o': 15, 'p': 16,
+        'q': 17, 'r': 18, 's': 19, 't': 20, 'u': 21, 'v': 22, 'w': 23, 'x': 24,
+        'y': 25, 'z': 26,
+        'æ': 27,   // Norwegian æ
+        'ø': 28,   // Norwegian ø  
+        'å': 29    // Norwegian å
+    };
+    
+    const ids = cleanText.split('').map(char => charToPhonemeId[char] || 0);
+    
+    console.log(`📝 Simple conversion: "${cleanText}" -> [${ids.slice(0, 10).join(', ')}${ids.length > 10 ? ', ...' : ''}] (${ids.length} IDs)`);
+    
+    return ids;
 }
 
 // WAV file saver
