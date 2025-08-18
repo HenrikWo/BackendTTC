@@ -304,9 +304,55 @@
         }
 
         function playAudio(audioUrl) {
+            console.log('🎵 Attempting to play audio:', audioUrl);
+            
             const container = document.getElementById('audio-container');
-            if (container) {
-                container.innerHTML = `<audio controls src="${audioUrl}" autoplay></audio>`;
+            if (!container) {
+                console.error('❌ Audio container not found');
+                return;
+            }
+            
+            // Check if the URL is relative and needs to be made absolute
+            let fullAudioUrl = audioUrl;
+            if (audioUrl && !audioUrl.startsWith('http')) {
+                fullAudioUrl = `${BACKEND_URL}${audioUrl.startsWith('/') ? '' : '/'}${audioUrl}`;
+                console.log('🔗 Converting to full URL:', fullAudioUrl);
+            }
+            
+            // Create audio element with error handling
+            const audioHtml = `
+                <audio controls autoplay style="width: 100%; margin-top: 10px;">
+                    <source src="${fullAudioUrl}" type="audio/wav">
+                    <source src="${fullAudioUrl}" type="audio/mpeg">
+                    Din nettleser støtter ikke audio-elementet.
+                </audio>
+                <p style="font-size: 12px; color: #666; margin-top: 5px;">
+                    Audio URL: <a href="${fullAudioUrl}" target="_blank">${fullAudioUrl}</a>
+                </p>
+            `;
+            
+            container.innerHTML = audioHtml;
+            
+            // Add event listeners for debugging
+            const audioElement = container.querySelector('audio');
+            if (audioElement) {
+                audioElement.addEventListener('loadstart', () => {
+                    console.log('🔄 Audio loading started');
+                });
+                
+                audioElement.addEventListener('canplay', () => {
+                    console.log('✅ Audio can start playing');
+                });
+                
+                audioElement.addEventListener('error', (e) => {
+                    console.error('❌ Audio error:', e);
+                    console.error('❌ Audio error details:', audioElement.error);
+                    showError(`Kunne ikke laste lydfil: ${audioElement.error?.message || 'Ukjent feil'}`);
+                });
+                
+                audioElement.addEventListener('loadeddata', () => {
+                    console.log('✅ Audio data loaded');
+                });
             }
         }
 
@@ -352,11 +398,23 @@
                         
                         const result = await sendTTSRequest(text);
                         
+                        console.log('🎯 TTS Result:', result);
+                        
                         if (result.audioUrl) {
+                            console.log('🎵 Audio URL received:', result.audioUrl);
                             playAudio(result.audioUrl);
                             showSuccess('TTS generert successfully!');
+                        } else if (result.audio_url) {
+                            console.log('🎵 Audio URL (alt format):', result.audio_url);
+                            playAudio(result.audio_url);
+                            showSuccess('TTS generert successfully!');
+                        } else if (result.url) {
+                            console.log('🎵 URL received:', result.url);
+                            playAudio(result.url);
+                            showSuccess('TTS generert successfully!');
                         } else {
-                            showSuccess('TTS prosessering ferdig!');
+                            console.log('⚠️ No audio URL in result:', Object.keys(result));
+                            showSuccess('TTS prosessering ferdig, men ingen lyd-URL mottatt');
                         }
                         
                     } catch (error) {
