@@ -488,13 +488,9 @@ function convertUsingPhonemeMap(text, config) {
     for (let char of cleanText) {
         if (char === ' ') {
             if (phonemeMap['_'] !== undefined) {
-                ids.push(phonemeMap['_']);
+                ids.push(Array.isArray(phonemeMap['_']) ? phonemeMap['_'][0] : phonemeMap['_']);
             } else if (phonemeMap[' '] !== undefined) {
-                ids.push(phonemeMap[' ']);
-            } else if (phonemeMap['SIL'] !== undefined) {
-                ids.push(phonemeMap['SIL']);
-            } else if (phonemeMap['sil'] !== undefined) {
-                ids.push(phonemeMap['sil']);
+                ids.push(Array.isArray(phonemeMap[' ']) ? phonemeMap[' '][0] : phonemeMap[' ']);
             } else {
                 ids.push(0);
             }
@@ -502,9 +498,10 @@ function convertUsingPhonemeMap(text, config) {
             let foundId = null;
             
             if (phonemeMap[char] !== undefined) {
-                foundId = phonemeMap[char];
+                // Config returns arrays like [32], we need the number 32
+                foundId = Array.isArray(phonemeMap[char]) ? phonemeMap[char][0] : phonemeMap[char];
             } else if (phonemeMap[char.toUpperCase()] !== undefined) {
-                foundId = phonemeMap[char.toUpperCase()];
+                foundId = Array.isArray(phonemeMap[char.toUpperCase()]) ? phonemeMap[char.toUpperCase()][0] : phonemeMap[char.toUpperCase()];
             }
             
             if (foundId !== null) {
