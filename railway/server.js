@@ -16,7 +16,7 @@ app.use(express.json({ limit: '10mb' }));
 // In-memory job storage
 const jobs = new Map();
 
-// Health check med volume info
+// Health check
 app.get('/health', (req, res) => {
     let modelInfo = { exists: false, files: [] };
     
@@ -52,8 +52,8 @@ app.get('/api/models', (req, res) => {
         const files = fs.readdirSync(MODELS_DIR);
         const modelFiles = files.filter(file => 
             file.endsWith('.onnx') || 
-            file.endsWith('.bin') || 
-            file.endsWith('.safetensors')
+            file.endsWith('.json') || 
+            file.endsWith('.bin')
         );
         
         const modelInfo = modelFiles.map(filename => {
@@ -79,6 +79,60 @@ app.get('/api/models', (req, res) => {
             error: 'Could not read models directory',
             details: error.message,
             directory: MODELS_DIR
+        });
+    }
+});
+
+// NYTT: Download modeller fra Google Drive
+app.post('/api/download-model', async (req, res) => {
+    const { url, filename } = req.body;
+    
+    if (!url || !filename) {
+        return res.status(400).json({ 
+            error: 'URL and filename required',
+            example: {
+                url: 'https://drive.google.com/uc?export=download&id=FILE_ID',
+                filename: 'model.onnx'
+            }
+        });
+    }
+    
+    try {
+        console.log('⬇️ Downloading model:', filename, 'from:', url);
+        
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const buffer = await response.arrayBuffer();
+        const filePath = path.join(MODELS_DIR, filename);
+        
+        // Ensure models directory exists
+        if (!fs.existsSync(MODELS_DIR)) {
+            fs.mkdirSync(MODELS_DIR, { recursive: true });
+        }
+        
+        fs.writeFileSync(filePath, Buffer.from(buffer));
+        
+        const sizeMB = Math.round(buffer.byteLength / (1024 * 1024) * 100) / 100;
+        console.log('✅ Downloaded successfully:', filename, '-', sizeMB, 'MB');
+        
+        res.json({
+            message: 'Model downloaded successfully!',
+            filename: filename,
+            size: sizeMB + ' MB',
+            path: filePath
+        });
+        
+    } catch (error) {
+        console.error('❌ Download failed:', error);
+        res.status(500).json({ 
+            error: 'Download failed',
+            details: error.message,
+            url: url,
+            filename: filename
         });
     }
 });
@@ -212,6 +266,8 @@ app.listen(PORT, () => {
             const models = files.filter(f => f.endsWith('.onnx'));
             if (models.length > 0) {
                 console.log(`🤖 ONNX models found:`, models);
+            } else {
+                console.log(`📋 No ONNX models yet. Use POST /api/download-model to add them.`);
             }
         } else {
             console.log(`📁 Volume not mounted yet - directory ${MODELS_DIR} doesn't exist`);
