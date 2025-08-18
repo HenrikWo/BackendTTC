@@ -464,24 +464,35 @@ function convertUsingPhonemeMap(text, config) {
     
     const phonemeMap = config.phoneme_id_map;
     
-    // DEBUG: Log more phoneme mappings - look for letters
-    console.log('🔍 Available phonemes (first 50):');
-    const phonemeKeys = Object.keys(phonemeMap).slice(0, 50);
-    for (let key of phonemeKeys) {
-        console.log(`  "${key}" -> ${phonemeMap[key]}`);
+    // DEBUG: Log more phoneme mappings - look for letters SPECIFICALLY
+    console.log('🔍 All phonemes (showing arrays):');
+    const allKeys = Object.keys(phonemeMap);
+    
+    // Show the specific letters we need
+    const testLetters = ['a', 'e', 'i', 'o', 'u', 't', 's', 'n', 'r', 'l', ' ', '_'];
+    for (let letter of testLetters) {
+        if (phonemeMap[letter] !== undefined) {
+            console.log(`  "${letter}" -> ${JSON.stringify(phonemeMap[letter])}`);
+        }
     }
     
     // Look for Norwegian-specific phonemes
-    const letterPhonemes = Object.keys(phonemeMap).filter(k => 
+    const letterPhonemes = allKeys.filter(k => 
         k.length === 1 && /[a-zæøå]/.test(k)
     );
     console.log('🔤 Letter phonemes found:', letterPhonemes.slice(0, 20));
     
-    // Look for common English phonemes  
-    const commonPhonemes = Object.keys(phonemeMap).filter(k => 
-        ['t', 'e', 's', 'a', 'i', 'n', 'o', 'r'].includes(k.toLowerCase())
-    );
-    console.log('📝 Common letter phonemes:', commonPhonemes);
+    // Debug the actual conversion for our text
+    console.log(`🔍 Converting "${cleanText}" character by character:`);
+    for (let char of cleanText) {
+        if (phonemeMap[char] !== undefined) {
+            const rawValue = phonemeMap[char];
+            const convertedValue = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+            console.log(`  "${char}" -> raw: ${JSON.stringify(rawValue)} -> converted: ${convertedValue}`);
+        } else {
+            console.log(`  "${char}" -> NOT FOUND`);
+        }
+    }
     
     const ids = [];
     
